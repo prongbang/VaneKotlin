@@ -1535,6 +1535,9 @@ public interface VaneClientInterface {
 }
 
 open class VaneClient : Disposable, AutoCloseable, VaneClientInterface {
+    init {
+        System.loadLibrary("vane")
+    }
 
     constructor(pointer: Pointer) {
         this.pointer = pointer
