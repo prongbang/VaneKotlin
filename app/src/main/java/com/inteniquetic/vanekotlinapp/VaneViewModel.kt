@@ -9,7 +9,7 @@ import kotlinx.coroutines.launch
 
 class VaneViewModel : ViewModel() {
     val config = VaneConfigurationBuilder()
-        .baseUrl("http://127.0.0.1:8000")
+        .baseUrl("http://192.168.0.180:8000")
         .defaultHeaders(mapOf("Authorization" to "Bearer token"))
         .timeout(30u)
         .build()

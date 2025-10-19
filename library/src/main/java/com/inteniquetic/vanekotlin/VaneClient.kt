@@ -1,11 +1,26 @@
 package com.inteniquetic.vanekotlin
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 // MARK: - Kotlin Extensions and Helpers
+
+object Vane {
+    private var isLoaded = false
+
+    fun initialize() {
+        if (isLoaded) return
+        try {
+            System.loadLibrary("vane")
+            isLoaded = true
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e("Vane", "FAIL: vane not found ❌", e)
+        }
+    }
+}
 
 enum class HttpMethod(val value: String) {
     GET("GET"),
