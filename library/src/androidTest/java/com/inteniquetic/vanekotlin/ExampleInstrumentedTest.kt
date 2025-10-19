@@ -2,6 +2,8 @@ package com.inteniquetic.vanekotlin
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.inteniquetic.vanekotlin.benchmark.BenchmarkRunner
+import com.inteniquetic.vanekotlin.benchmark.createRetrofitService
 import kotlinx.coroutines.runBlocking
 
 import org.junit.Test
@@ -21,8 +23,12 @@ class ExampleInstrumentedTest {
         Vane.initialize()
     }
 
+    companion object {
+        const val BASE_URL = "http://192.168.0.180:8000"
+    }
+
     val config = VaneConfigurationBuilder()
-        .baseUrl("http://192.168.0.180:8000")
+        .baseUrl(BASE_URL)
         .defaultHeaders(mapOf("Authorization" to "Bearer token"))
         .timeout(30u)
         .build()
@@ -42,5 +48,13 @@ class ExampleInstrumentedTest {
             .queryParam("page", "1")
             .responseString()
         print("response: $response")
+    }
+
+    @Test
+    fun benchmark() = runBlocking {
+        val vane = createVaneClient(config)
+        val retrofit = createRetrofitService(BASE_URL)
+        BenchmarkRunner.benchmarkRetrofit(retrofit)
+        BenchmarkRunner.benchmarkVane(vane)
     }
 }
