@@ -18,9 +18,11 @@ package com.inteniquetic.vanekotlin
 // helpers directly inline like we're doing here.
 
 import com.sun.jna.Library
+import com.sun.jna.IntegerType
 import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.Structure
+import com.sun.jna.Callback
 import com.sun.jna.ptr.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -41,19 +43,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 open class RustBuffer : Structure() {
     // Note: `capacity` and `len` are actually `ULong` values, but JVM only supports signed values.
     // When dealing with these fields, make sure to call `toULong()`.
-    @JvmField
-    var capacity: Long = 0
+    @JvmField var capacity: Long = 0
+    @JvmField var len: Long = 0
+    @JvmField var data: Pointer? = null
 
-    @JvmField
-    var len: Long = 0
+    class ByValue: RustBuffer(), Structure.ByValue
+    class ByReference: RustBuffer(), Structure.ByReference
 
-    @JvmField
-    var data: Pointer? = null
-
-    class ByValue : RustBuffer(), Structure.ByValue
-    class ByReference : RustBuffer(), Structure.ByReference
-
-    internal fun setValue(other: RustBuffer) {
+   internal fun setValue(other: RustBuffer) {
         capacity = other.capacity
         len = other.len
         data = other.data
@@ -64,9 +61,9 @@ open class RustBuffer : Structure() {
             // Note: need to convert the size to a `Long` value to make this work with JVM.
             UniffiLib.INSTANCE.ffi_vane_rustbuffer_alloc(size.toLong(), status)
         }.also {
-            if (it.data == null) {
-                throw RuntimeException("RustBuffer.alloc() returned null data pointer (size=${size})")
-            }
+            if(it.data == null) {
+               throw RuntimeException("RustBuffer.alloc() returned null data pointer (size=${size})")
+           }
         }
 
         internal fun create(capacity: ULong, len: ULong, data: Pointer?): RustBuffer.ByValue {
@@ -131,15 +128,11 @@ class RustBufferByReference : ByReference(16) {
 
 @Structure.FieldOrder("len", "data")
 internal open class ForeignBytes : Structure() {
-    @JvmField
-    var len: Int = 0
-
-    @JvmField
-    var data: Pointer? = null
+    @JvmField var len: Int = 0
+    @JvmField var data: Pointer? = null
 
     class ByValue : ForeignBytes(), Structure.ByValue
 }
-
 /**
  * The FfiConverter interface handles converter types to and from the FFI
  *
@@ -199,11 +192,11 @@ public interface FfiConverter<KotlinType, FfiType> {
     fun liftFromRustBuffer(rbuf: RustBuffer.ByValue): KotlinType {
         val byteBuf = rbuf.asByteBuffer()!!
         try {
-            val item = read(byteBuf)
-            if (byteBuf.hasRemaining()) {
-                throw RuntimeException("junk remaining in buffer after lifting, something is very wrong!!")
-            }
-            return item
+           val item = read(byteBuf)
+           if (byteBuf.hasRemaining()) {
+               throw RuntimeException("junk remaining in buffer after lifting, something is very wrong!!")
+           }
+           return item
         } finally {
             RustBuffer.free(rbuf)
         }
@@ -215,7 +208,7 @@ public interface FfiConverter<KotlinType, FfiType> {
  *
  * @suppress
  */
-public interface FfiConverterRustBuffer<KotlinType> : FfiConverter<KotlinType, RustBuffer.ByValue> {
+public interface FfiConverterRustBuffer<KotlinType>: FfiConverter<KotlinType, RustBuffer.ByValue> {
     override fun lift(value: RustBuffer.ByValue) = liftFromRustBuffer(value)
     override fun lower(value: KotlinType) = lowerIntoRustBuffer(value)
 }
@@ -228,13 +221,10 @@ internal const val UNIFFI_CALL_UNEXPECTED_ERROR = 2.toByte()
 
 @Structure.FieldOrder("code", "error_buf")
 internal open class UniffiRustCallStatus : Structure() {
-    @JvmField
-    var code: Byte = 0
+    @JvmField var code: Byte = 0
+    @JvmField var error_buf: RustBuffer.ByValue = RustBuffer.ByValue()
 
-    @JvmField
-    var error_buf: RustBuffer.ByValue = RustBuffer.ByValue()
-
-    class ByValue : UniffiRustCallStatus(), Structure.ByValue
+    class ByValue: UniffiRustCallStatus(), Structure.ByValue
 
     fun isSuccess(): Boolean {
         return code == UNIFFI_CALL_SUCCESS
@@ -274,10 +264,7 @@ interface UniffiRustCallStatusErrorHandler<E> {
 // synchronize itself
 
 // Call a rust function that returns a Result<>.  Pass in the Error class companion that corresponds to the Err
-private inline fun <U, E : kotlin.Exception> uniffiRustCallWithError(
-    errorHandler: UniffiRustCallStatusErrorHandler<E>,
-    callback: (UniffiRustCallStatus) -> U
-): U {
+private inline fun <U, E: kotlin.Exception> uniffiRustCallWithError(errorHandler: UniffiRustCallStatusErrorHandler<E>, callback: (UniffiRustCallStatus) -> U): U {
     var status = UniffiRustCallStatus()
     val return_value = callback(status)
     uniffiCheckCallStatus(errorHandler, status)
@@ -285,10 +272,7 @@ private inline fun <U, E : kotlin.Exception> uniffiRustCallWithError(
 }
 
 // Check UniffiRustCallStatus and throw an error if the call wasn't successful
-private fun <E : kotlin.Exception> uniffiCheckCallStatus(
-    errorHandler: UniffiRustCallStatusErrorHandler<E>,
-    status: UniffiRustCallStatus
-) {
+private fun<E: kotlin.Exception> uniffiCheckCallStatus(errorHandler: UniffiRustCallStatusErrorHandler<E>, status: UniffiRustCallStatus) {
     if (status.isSuccess()) {
         return
     } else if (status.isError()) {
@@ -312,7 +296,7 @@ private fun <E : kotlin.Exception> uniffiCheckCallStatus(
  *
  * @suppress
  */
-object UniffiNullRustCallStatusErrorHandler : UniffiRustCallStatusErrorHandler<InternalException> {
+object UniffiNullRustCallStatusErrorHandler: UniffiRustCallStatusErrorHandler<InternalException> {
     override fun lift(error_buf: RustBuffer.ByValue): InternalException {
         RustBuffer.free(error_buf)
         return InternalException("Unexpected CALL_ERROR")
@@ -324,20 +308,20 @@ private inline fun <U> uniffiRustCall(callback: (UniffiRustCallStatus) -> U): U 
     return uniffiRustCallWithError(UniffiNullRustCallStatusErrorHandler, callback)
 }
 
-internal inline fun <T> uniffiTraitInterfaceCall(
+internal inline fun<T> uniffiTraitInterfaceCall(
     callStatus: UniffiRustCallStatus,
     makeCall: () -> T,
     writeReturn: (T) -> Unit,
 ) {
     try {
         writeReturn(makeCall())
-    } catch (e: kotlin.Exception) {
+    } catch(e: kotlin.Exception) {
         callStatus.code = UNIFFI_CALL_UNEXPECTED_ERROR
         callStatus.error_buf = FfiConverterString.lower(e.toString())
     }
 }
 
-internal inline fun <T, reified E : Throwable> uniffiTraitInterfaceCallWithError(
+internal inline fun<T, reified E: Throwable> uniffiTraitInterfaceCallWithError(
     callStatus: UniffiRustCallStatus,
     makeCall: () -> T,
     writeReturn: (T) -> Unit,
@@ -345,7 +329,7 @@ internal inline fun <T, reified E : Throwable> uniffiTraitInterfaceCallWithError
 ) {
     try {
         writeReturn(makeCall())
-    } catch (e: kotlin.Exception) {
+    } catch(e: kotlin.Exception) {
         if (e is E) {
             callStatus.code = UNIFFI_CALL_ERROR
             callStatus.error_buf = lowerError(e)
@@ -355,11 +339,10 @@ internal inline fun <T, reified E : Throwable> uniffiTraitInterfaceCallWithError
         }
     }
 }
-
 // Map handles to objects
 //
 // This is used pass an opaque 64-bit handle representing a foreign object to the Rust code.
-internal class UniffiHandleMap<T : Any> {
+internal class UniffiHandleMap<T: Any> {
     private val map = ConcurrentHashMap<Long, T>()
     private val counter = java.util.concurrent.atomic.AtomicLong(0)
 
@@ -403,17 +386,14 @@ private inline fun <reified Lib : Library> loadIndirect(
 
 // Define FFI callback types
 internal interface UniffiRustFutureContinuationCallback : com.sun.jna.Callback {
-    fun callback(`data`: Long, `pollResult`: Byte)
+    fun callback(`data`: Long,`pollResult`: Byte,)
 }
-
 internal interface UniffiForeignFutureFree : com.sun.jna.Callback {
-    fun callback(`handle`: Long)
+    fun callback(`handle`: Long,)
 }
-
 internal interface UniffiCallbackInterfaceFree : com.sun.jna.Callback {
-    fun callback(`handle`: Long)
+    fun callback(`handle`: Long,)
 }
-
 @Structure.FieldOrder("handle", "free")
 internal open class UniffiForeignFuture(
     @JvmField internal var `handle`: Long = 0.toLong(),
@@ -422,15 +402,14 @@ internal open class UniffiForeignFuture(
     class UniffiByValue(
         `handle`: Long = 0.toLong(),
         `free`: UniffiForeignFutureFree? = null,
-    ) : UniffiForeignFuture(`handle`, `free`), Structure.ByValue
+    ): UniffiForeignFuture(`handle`,`free`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFuture) {
+   internal fun uniffiSetValue(other: UniffiForeignFuture) {
         `handle` = other.`handle`
         `free` = other.`free`
     }
 
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructU8(
     @JvmField internal var `returnValue`: Byte = 0.toByte(),
@@ -439,19 +418,17 @@ internal open class UniffiForeignFutureStructU8(
     class UniffiByValue(
         `returnValue`: Byte = 0.toByte(),
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructU8(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructU8(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructU8) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructU8) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteU8 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructU8.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructU8.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructI8(
     @JvmField internal var `returnValue`: Byte = 0.toByte(),
@@ -460,19 +437,17 @@ internal open class UniffiForeignFutureStructI8(
     class UniffiByValue(
         `returnValue`: Byte = 0.toByte(),
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructI8(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructI8(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructI8) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructI8) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteI8 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructI8.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructI8.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructU16(
     @JvmField internal var `returnValue`: Short = 0.toShort(),
@@ -481,19 +456,17 @@ internal open class UniffiForeignFutureStructU16(
     class UniffiByValue(
         `returnValue`: Short = 0.toShort(),
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructU16(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructU16(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructU16) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructU16) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteU16 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructU16.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructU16.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructI16(
     @JvmField internal var `returnValue`: Short = 0.toShort(),
@@ -502,19 +475,17 @@ internal open class UniffiForeignFutureStructI16(
     class UniffiByValue(
         `returnValue`: Short = 0.toShort(),
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructI16(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructI16(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructI16) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructI16) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteI16 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructI16.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructI16.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructU32(
     @JvmField internal var `returnValue`: Int = 0,
@@ -523,19 +494,17 @@ internal open class UniffiForeignFutureStructU32(
     class UniffiByValue(
         `returnValue`: Int = 0,
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructU32(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructU32(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructU32) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructU32) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteU32 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructU32.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructU32.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructI32(
     @JvmField internal var `returnValue`: Int = 0,
@@ -544,19 +513,17 @@ internal open class UniffiForeignFutureStructI32(
     class UniffiByValue(
         `returnValue`: Int = 0,
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructI32(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructI32(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructI32) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructI32) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteI32 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructI32.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructI32.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructU64(
     @JvmField internal var `returnValue`: Long = 0.toLong(),
@@ -565,19 +532,17 @@ internal open class UniffiForeignFutureStructU64(
     class UniffiByValue(
         `returnValue`: Long = 0.toLong(),
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructU64(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructU64(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructU64) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructU64) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteU64 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructU64.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructU64.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructI64(
     @JvmField internal var `returnValue`: Long = 0.toLong(),
@@ -586,19 +551,17 @@ internal open class UniffiForeignFutureStructI64(
     class UniffiByValue(
         `returnValue`: Long = 0.toLong(),
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructI64(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructI64(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructI64) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructI64) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteI64 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructI64.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructI64.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructF32(
     @JvmField internal var `returnValue`: Float = 0.0f,
@@ -607,19 +570,17 @@ internal open class UniffiForeignFutureStructF32(
     class UniffiByValue(
         `returnValue`: Float = 0.0f,
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructF32(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructF32(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructF32) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructF32) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteF32 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructF32.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructF32.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructF64(
     @JvmField internal var `returnValue`: Double = 0.0,
@@ -628,19 +589,17 @@ internal open class UniffiForeignFutureStructF64(
     class UniffiByValue(
         `returnValue`: Double = 0.0,
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructF64(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructF64(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructF64) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructF64) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteF64 : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructF64.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructF64.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructPointer(
     @JvmField internal var `returnValue`: Pointer = Pointer.NULL,
@@ -649,19 +608,17 @@ internal open class UniffiForeignFutureStructPointer(
     class UniffiByValue(
         `returnValue`: Pointer = Pointer.NULL,
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructPointer(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructPointer(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructPointer) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructPointer) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompletePointer : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructPointer.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructPointer.UniffiByValue,)
 }
-
 @Structure.FieldOrder("returnValue", "callStatus")
 internal open class UniffiForeignFutureStructRustBuffer(
     @JvmField internal var `returnValue`: RustBuffer.ByValue = RustBuffer.ByValue(),
@@ -670,88 +627,150 @@ internal open class UniffiForeignFutureStructRustBuffer(
     class UniffiByValue(
         `returnValue`: RustBuffer.ByValue = RustBuffer.ByValue(),
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructRustBuffer(`returnValue`, `callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructRustBuffer(`returnValue`,`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructRustBuffer) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructRustBuffer) {
         `returnValue` = other.`returnValue`
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteRustBuffer : com.sun.jna.Callback {
-    fun callback(
-        `callbackData`: Long,
-        `result`: UniffiForeignFutureStructRustBuffer.UniffiByValue,
-    )
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructRustBuffer.UniffiByValue,)
 }
-
 @Structure.FieldOrder("callStatus")
 internal open class UniffiForeignFutureStructVoid(
     @JvmField internal var `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
 ) : Structure() {
     class UniffiByValue(
         `callStatus`: UniffiRustCallStatus.ByValue = UniffiRustCallStatus.ByValue(),
-    ) : UniffiForeignFutureStructVoid(`callStatus`), Structure.ByValue
+    ): UniffiForeignFutureStructVoid(`callStatus`,), Structure.ByValue
 
-    internal fun uniffiSetValue(other: UniffiForeignFutureStructVoid) {
+   internal fun uniffiSetValue(other: UniffiForeignFutureStructVoid) {
         `callStatus` = other.`callStatus`
     }
 
 }
-
 internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
-    fun callback(`callbackData`: Long, `result`: UniffiForeignFutureStructVoid.UniffiByValue)
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructVoid.UniffiByValue,)
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
-// N.B. the name of the extension is very misleading, since it is
-// rather `InterfaceTooLargeException`, caused by too many methods
+// N.B. the name of the extension is very misleading, since it is 
+// rather `InterfaceTooLargeException`, caused by too many methods 
 // in the interface for large crates.
 //
 // By splitting the otherwise huge interface into two parts
-// * UniffiLib
+// * UniffiLib 
 // * IntegrityCheckingUniffiLib (this)
 // we allow for ~2x as many methods in the UniffiLib interface.
-//
-// The `ffi_uniffi_contract_version` method and all checksum methods are put
+// 
+// The `ffi_uniffi_contract_version` method and all checksum methods are put 
 // into `IntegrityCheckingUniffiLib` and these methods are called only once,
 // when the library is loaded.
 internal interface IntegrityCheckingUniffiLib : Library {
     // Integrity check functions only
     fun uniffi_vane_checksum_func_create_default_config(
-    ): Short
-
-    fun uniffi_vane_checksum_func_create_vane_client(
-    ): Short
-
-    fun uniffi_vane_checksum_func_parse_json_response(
-    ): Short
-
-    fun uniffi_vane_checksum_func_response_body_utf8(
-    ): Short
-
-    fun uniffi_vane_checksum_method_vaneclient_delete_request(
-    ): Short
-
-    fun uniffi_vane_checksum_method_vaneclient_execute_request(
-    ): Short
-
-    fun uniffi_vane_checksum_method_vaneclient_get_request(
-    ): Short
-
-    fun uniffi_vane_checksum_method_vaneclient_patch_request(
-    ): Short
-
-    fun uniffi_vane_checksum_method_vaneclient_post_request(
-    ): Short
-
-    fun uniffi_vane_checksum_method_vaneclient_put_request(
-    ): Short
-
-    fun ffi_vane_uniffi_contract_version(
-    ): Int
+): Short
+fun uniffi_vane_checksum_func_create_vane_client(
+): Short
+fun uniffi_vane_checksum_func_parse_json_response(
+): Short
+fun uniffi_vane_checksum_func_response_body_utf8(
+): Short
+fun uniffi_vane_checksum_method_vaneclient_delete_request(
+): Short
+fun uniffi_vane_checksum_method_vaneclient_execute_request(
+): Short
+fun uniffi_vane_checksum_method_vaneclient_get_request(
+): Short
+fun uniffi_vane_checksum_method_vaneclient_patch_request(
+): Short
+fun uniffi_vane_checksum_method_vaneclient_post_request(
+): Short
+fun uniffi_vane_checksum_method_vaneclient_put_request(
+): Short
+fun ffi_vane_uniffi_contract_version(
+): Int
 
 }
 
@@ -762,8 +781,8 @@ internal interface UniffiLib : Library {
         internal val INSTANCE: UniffiLib by lazy {
             val componentName = "vane"
             // For large crates we prevent `MethodTooLargeException` (see #2340)
-            // N.B. the name of the extension is very misleading, since it is
-            // rather `InterfaceTooLargeException`, caused by too many methods
+            // N.B. the name of the extension is very misleading, since it is 
+            // rather `InterfaceTooLargeException`, caused by too many methods 
             // in the interface for large crates.
             //
             // By splitting the otherwise huge interface into two parts
@@ -771,7 +790,7 @@ internal interface UniffiLib : Library {
             // * IntegrityCheckingUniffiLib
             // And all checksum methods are put into `IntegrityCheckingUniffiLib`
             // we allow for ~2x as many methods in the UniffiLib interface.
-            //
+            // 
             // Thus we first load the library with `loadIndirect` as `IntegrityCheckingUniffiLib`
             // so that we can (optionally!) call `uniffiCheckApiChecksums`...
             loadIndirect<IntegrityCheckingUniffiLib>(componentName)
@@ -786,12 +805,12 @@ internal interface UniffiLib : Library {
             // to trigger this issue, the performance impact is negligible, running on
             // a macOS M1 machine the `loadIndirect` call takes ~50ms.
             val lib = loadIndirect<UniffiLib>(componentName)
-            // No need to check the contract version and checksums, since
+            // No need to check the contract version and checksums, since 
             // we already did that with `IntegrityCheckingUniffiLib` above.
             // Loading of library with integrity check done.
             lib
         }
-
+        
         // The Cleaner for the whole library
         internal val CLEANER: UniffiCleaner by lazy {
             UniffiCleaner.create()
@@ -799,286 +818,142 @@ internal interface UniffiLib : Library {
     }
 
     // FFI functions
-    fun uniffi_vane_fn_clone_vaneclient(
-        `ptr`: Pointer, uniffi_out_err: UniffiRustCallStatus,
-    ): Pointer
-
-    fun uniffi_vane_fn_free_vaneclient(
-        `ptr`: Pointer, uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-
-    fun uniffi_vane_fn_method_vaneclient_delete_request(
-        `ptr`: Pointer, `url`: RustBuffer.ByValue, uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun uniffi_vane_fn_method_vaneclient_execute_request(
-        `ptr`: Pointer, `request`: RustBuffer.ByValue, uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun uniffi_vane_fn_method_vaneclient_get_request(
-        `ptr`: Pointer, `url`: RustBuffer.ByValue, uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun uniffi_vane_fn_method_vaneclient_patch_request(
-        `ptr`: Pointer,
-        `url`: RustBuffer.ByValue,
-        `body`: RustBuffer.ByValue,
-        uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun uniffi_vane_fn_method_vaneclient_post_request(
-        `ptr`: Pointer,
-        `url`: RustBuffer.ByValue,
-        `body`: RustBuffer.ByValue,
-        uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun uniffi_vane_fn_method_vaneclient_put_request(
-        `ptr`: Pointer,
-        `url`: RustBuffer.ByValue,
-        `body`: RustBuffer.ByValue,
-        uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun uniffi_vane_fn_func_create_default_config(
-        uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun uniffi_vane_fn_func_create_vane_client(
-        `config`: RustBuffer.ByValue, uniffi_out_err: UniffiRustCallStatus,
-    ): Pointer
-
-    fun uniffi_vane_fn_func_parse_json_response(
-        `resp`: RustBuffer.ByValue, uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun uniffi_vane_fn_func_response_body_utf8(
-        `resp`: RustBuffer.ByValue, uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun ffi_vane_rustbuffer_alloc(
-        `size`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun ffi_vane_rustbuffer_from_bytes(
-        `bytes`: ForeignBytes.ByValue, uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun ffi_vane_rustbuffer_free(
-        `buf`: RustBuffer.ByValue, uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-
-    fun ffi_vane_rustbuffer_reserve(
-        `buf`: RustBuffer.ByValue, `additional`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun ffi_vane_rust_future_poll_u8(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_u8(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_u8(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_u8(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Byte
-
-    fun ffi_vane_rust_future_poll_i8(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_i8(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_i8(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_i8(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Byte
-
-    fun ffi_vane_rust_future_poll_u16(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_u16(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_u16(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_u16(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Short
-
-    fun ffi_vane_rust_future_poll_i16(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_i16(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_i16(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_i16(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Short
-
-    fun ffi_vane_rust_future_poll_u32(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_u32(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_u32(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_u32(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-
-    fun ffi_vane_rust_future_poll_i32(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_i32(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_i32(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_i32(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-
-    fun ffi_vane_rust_future_poll_u64(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_u64(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_u64(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_u64(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-
-    fun ffi_vane_rust_future_poll_i64(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_i64(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_i64(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_i64(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-
-    fun ffi_vane_rust_future_poll_f32(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_f32(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_f32(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_f32(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Float
-
-    fun ffi_vane_rust_future_poll_f64(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_f64(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_f64(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_f64(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Double
-
-    fun ffi_vane_rust_future_poll_pointer(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_pointer(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_pointer(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_pointer(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Pointer
-
-    fun ffi_vane_rust_future_poll_rust_buffer(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_rust_buffer(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_rust_buffer(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_rust_buffer(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-
-    fun ffi_vane_rust_future_poll_void(
-        `handle`: Long, `callback`: UniffiRustFutureContinuationCallback, `callbackData`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_cancel_void(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_free_void(
-        `handle`: Long,
-    ): Unit
-
-    fun ffi_vane_rust_future_complete_void(
-        `handle`: Long, uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
+    fun uniffi_vane_fn_clone_vaneclient(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_vane_fn_free_vaneclient(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_vane_fn_method_vaneclient_delete_request(`ptr`: Pointer,`url`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_vane_fn_method_vaneclient_execute_request(`ptr`: Pointer,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_vane_fn_method_vaneclient_get_request(`ptr`: Pointer,`url`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_vane_fn_method_vaneclient_patch_request(`ptr`: Pointer,`url`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_vane_fn_method_vaneclient_post_request(`ptr`: Pointer,`url`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_vane_fn_method_vaneclient_put_request(`ptr`: Pointer,`url`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_vane_fn_func_create_default_config(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_vane_fn_func_create_vane_client(`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_vane_fn_func_parse_json_response(`resp`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_vane_fn_func_response_body_utf8(`resp`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun ffi_vane_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun ffi_vane_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun ffi_vane_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun ffi_vane_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun ffi_vane_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_u8(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_u8(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+fun ffi_vane_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_i8(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_i8(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+fun ffi_vane_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_u16(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_u16(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Short
+fun ffi_vane_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_i16(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_i16(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Short
+fun ffi_vane_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_u32(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_u32(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+fun ffi_vane_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_i32(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_i32(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+fun ffi_vane_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_u64(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_u64(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+fun ffi_vane_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_i64(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_i64(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+fun ffi_vane_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_f32(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_f32(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Float
+fun ffi_vane_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_f64(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_f64(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Double
+fun ffi_vane_rust_future_poll_pointer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_pointer(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_pointer(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_pointer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun ffi_vane_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_rust_buffer(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_rust_buffer(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun ffi_vane_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+fun ffi_vane_rust_future_cancel_void(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_free_void(`handle`: Long,
+): Unit
+fun ffi_vane_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 
 }
 
@@ -1091,7 +966,6 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI contract version mismatch: try cleaning and rebuilding your project")
     }
 }
-
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_vane_checksum_func_create_default_config() != 54371.toShort()) {
@@ -1148,7 +1022,6 @@ public fun uniffiEnsureInitialized() {
 // helper method to execute a block and destroy the object at the end.
 interface Disposable {
     fun destroy()
-
     companion object {
         fun destroy(vararg args: Any?) {
             for (arg in args) {
@@ -1162,7 +1035,6 @@ interface Disposable {
                             }
                         }
                     }
-
                     is Map<*, *> -> {
                         for (element in arg.values) {
                             if (element is Disposable) {
@@ -1170,7 +1042,6 @@ interface Disposable {
                             }
                         }
                     }
-
                     is Iterable<*> -> {
                         for (element in arg) {
                             if (element is Disposable) {
@@ -1199,13 +1070,12 @@ inline fun <T : Disposable?, R> T.use(block: (T) -> R) =
         }
     }
 
-/**
+/** 
  * Used to instantiate an interface without an actual pointer, for fakes in tests, mostly.
  *
  * @suppress
  * */
 object NoPointer
-
 /**
  * The cleaner interface for Object finalization code to run.
  * This is the entry point to any implementation that we're using.
@@ -1274,7 +1144,7 @@ private class JavaLangRefCleanable(
 /**
  * @suppress
  */
-public object FfiConverterUShort : FfiConverter<UShort, Short> {
+public object FfiConverterUShort: FfiConverter<UShort, Short> {
     override fun lift(value: Short): UShort {
         return value.toUShort()
     }
@@ -1297,7 +1167,7 @@ public object FfiConverterUShort : FfiConverter<UShort, Short> {
 /**
  * @suppress
  */
-public object FfiConverterULong : FfiConverter<ULong, Long> {
+public object FfiConverterULong: FfiConverter<ULong, Long> {
     override fun lift(value: Long): ULong {
         return value.toULong()
     }
@@ -1320,7 +1190,7 @@ public object FfiConverterULong : FfiConverter<ULong, Long> {
 /**
  * @suppress
  */
-public object FfiConverterBoolean : FfiConverter<Boolean, Byte> {
+public object FfiConverterBoolean: FfiConverter<Boolean, Byte> {
     override fun lift(value: Byte): Boolean {
         return value.toInt() != 0
     }
@@ -1343,7 +1213,7 @@ public object FfiConverterBoolean : FfiConverter<Boolean, Byte> {
 /**
  * @suppress
  */
-public object FfiConverterString : FfiConverter<String, RustBuffer.ByValue> {
+public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
     // Note: we don't inherit from FfiConverterRustBuffer, because we use a
     // special encoding when lowering/lifting.  We can use `RustBuffer.len` to
     // store our length and avoid writing it out to the buffer.
@@ -1400,18 +1270,16 @@ public object FfiConverterString : FfiConverter<String, RustBuffer.ByValue> {
 /**
  * @suppress
  */
-public object FfiConverterByteArray : FfiConverterRustBuffer<ByteArray> {
+public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
     override fun read(buf: ByteBuffer): ByteArray {
         val len = buf.getInt()
         val byteArr = ByteArray(len)
         buf.get(byteArr)
         return byteArr
     }
-
     override fun allocationSize(value: ByteArray): ULong {
         return 4UL + value.size.toULong()
     }
-
     override fun write(value: ByteArray, buf: ByteBuffer) {
         buf.putInt(value.size)
         buf.put(value)
@@ -1518,26 +1386,24 @@ public object FfiConverterByteArray : FfiConverterRustBuffer<ByteArray> {
 
 
 public interface VaneClientInterface {
-
+    
     fun `deleteRequest`(`url`: kotlin.String): VaneResponse
-
+    
     fun `executeRequest`(`request`: VaneRequest): VaneResponse
-
+    
     fun `getRequest`(`url`: kotlin.String): VaneResponse
-
+    
     fun `patchRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse
-
+    
     fun `postRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse
-
+    
     fun `putRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse
-
+    
     companion object
 }
 
-open class VaneClient : Disposable, AutoCloseable, VaneClientInterface {
-    init {
-        System.loadLibrary("vane")
-    }
+open class VaneClient: Disposable, AutoCloseable, VaneClientInterface
+{
 
     constructor(pointer: Pointer) {
         this.pointer = pointer
@@ -1588,7 +1454,7 @@ open class VaneClient : Disposable, AutoCloseable, VaneClientInterface {
             if (c == Long.MAX_VALUE) {
                 throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
             }
-        } while (!this.callCounter.compareAndSet(c, c + 1L))
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
         // Now we can safely do the method call without the pointer being freed concurrently.
         try {
             return block(this.uniffiClonePointer())
@@ -1618,108 +1484,96 @@ open class VaneClient : Disposable, AutoCloseable, VaneClientInterface {
         }
     }
 
-
-    @Throws(VaneException::class)
-    override fun `deleteRequest`(`url`: kotlin.String): VaneResponse {
-        return FfiConverterTypeVaneResponse.lift(
-            callWithPointer {
-                uniffiRustCallWithError(VaneException) { _status ->
-                    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_delete_request(
-                        it, FfiConverterString.lower(`url`), _status
-                    )
-                }
-            }
-        )
+    
+    @Throws(VaneException::class)override fun `deleteRequest`(`url`: kotlin.String): VaneResponse {
+            return FfiConverterTypeVaneResponse.lift(
+    callWithPointer {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_delete_request(
+        it, FfiConverterString.lower(`url`),_status)
+}
     }
-
-
-    @Throws(VaneException::class)
-    override fun `executeRequest`(`request`: VaneRequest): VaneResponse {
-        return FfiConverterTypeVaneResponse.lift(
-            callWithPointer {
-                uniffiRustCallWithError(VaneException) { _status ->
-                    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_execute_request(
-                        it, FfiConverterTypeVaneRequest.lower(`request`), _status
-                    )
-                }
-            }
-        )
+    )
     }
+    
 
-
-    @Throws(VaneException::class)
-    override fun `getRequest`(`url`: kotlin.String): VaneResponse {
-        return FfiConverterTypeVaneResponse.lift(
-            callWithPointer {
-                uniffiRustCallWithError(VaneException) { _status ->
-                    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_get_request(
-                        it, FfiConverterString.lower(`url`), _status
-                    )
-                }
-            }
-        )
+    
+    @Throws(VaneException::class)override fun `executeRequest`(`request`: VaneRequest): VaneResponse {
+            return FfiConverterTypeVaneResponse.lift(
+    callWithPointer {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_execute_request(
+        it, FfiConverterTypeVaneRequest.lower(`request`),_status)
+}
     }
-
-
-    @Throws(VaneException::class)
-    override fun `patchRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse {
-        return FfiConverterTypeVaneResponse.lift(
-            callWithPointer {
-                uniffiRustCallWithError(VaneException) { _status ->
-                    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_patch_request(
-                        it,
-                        FfiConverterString.lower(`url`),
-                        FfiConverterOptionalByteArray.lower(`body`),
-                        _status
-                    )
-                }
-            }
-        )
+    )
     }
+    
 
-
-    @Throws(VaneException::class)
-    override fun `postRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse {
-        return FfiConverterTypeVaneResponse.lift(
-            callWithPointer {
-                uniffiRustCallWithError(VaneException) { _status ->
-                    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_post_request(
-                        it,
-                        FfiConverterString.lower(`url`),
-                        FfiConverterOptionalByteArray.lower(`body`),
-                        _status
-                    )
-                }
-            }
-        )
+    
+    @Throws(VaneException::class)override fun `getRequest`(`url`: kotlin.String): VaneResponse {
+            return FfiConverterTypeVaneResponse.lift(
+    callWithPointer {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_get_request(
+        it, FfiConverterString.lower(`url`),_status)
+}
     }
-
-
-    @Throws(VaneException::class)
-    override fun `putRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse {
-        return FfiConverterTypeVaneResponse.lift(
-            callWithPointer {
-                uniffiRustCallWithError(VaneException) { _status ->
-                    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_put_request(
-                        it,
-                        FfiConverterString.lower(`url`),
-                        FfiConverterOptionalByteArray.lower(`body`),
-                        _status
-                    )
-                }
-            }
-        )
+    )
     }
+    
 
+    
+    @Throws(VaneException::class)override fun `patchRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse {
+            return FfiConverterTypeVaneResponse.lift(
+    callWithPointer {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_patch_request(
+        it, FfiConverterString.lower(`url`),FfiConverterOptionalByteArray.lower(`body`),_status)
+}
+    }
+    )
+    }
+    
 
+    
+    @Throws(VaneException::class)override fun `postRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse {
+            return FfiConverterTypeVaneResponse.lift(
+    callWithPointer {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_post_request(
+        it, FfiConverterString.lower(`url`),FfiConverterOptionalByteArray.lower(`body`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(VaneException::class)override fun `putRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse {
+            return FfiConverterTypeVaneResponse.lift(
+    callWithPointer {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_put_request(
+        it, FfiConverterString.lower(`url`),FfiConverterOptionalByteArray.lower(`body`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+    
     companion object
-
+    
 }
 
 /**
  * @suppress
  */
-public object FfiConverterTypeVaneClient : FfiConverter<VaneClient, Pointer> {
+public object FfiConverterTypeVaneClient: FfiConverter<VaneClient, Pointer> {
 
     override fun lower(value: VaneClient): Pointer {
         return value.uniffiClonePointer()
@@ -1745,21 +1599,22 @@ public object FfiConverterTypeVaneClient : FfiConverter<VaneClient, Pointer> {
 }
 
 
-data class VaneClientConfig(
-    var `baseUrl`: kotlin.String?,
-    var `defaultHeaders`: Map<kotlin.String, kotlin.String>,
-    var `timeoutSeconds`: kotlin.ULong?,
-    var `followRedirects`: kotlin.Boolean,
+
+data class VaneClientConfig (
+    var `baseUrl`: kotlin.String?, 
+    var `defaultHeaders`: Map<kotlin.String, kotlin.String>, 
+    var `timeoutSeconds`: kotlin.ULong?, 
+    var `followRedirects`: kotlin.Boolean, 
     var `userAgent`: kotlin.String?
 ) {
-
+    
     companion object
 }
 
 /**
  * @suppress
  */
-public object FfiConverterTypeVaneClientConfig : FfiConverterRustBuffer<VaneClientConfig> {
+public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClientConfig> {
     override fun read(buf: ByteBuffer): VaneClientConfig {
         return VaneClientConfig(
             FfiConverterOptionalString.read(buf),
@@ -1772,39 +1627,40 @@ public object FfiConverterTypeVaneClientConfig : FfiConverterRustBuffer<VaneClie
 
     override fun allocationSize(value: VaneClientConfig) = (
             FfiConverterOptionalString.allocationSize(value.`baseUrl`) +
-                    FfiConverterMapStringString.allocationSize(value.`defaultHeaders`) +
-                    FfiConverterOptionalULong.allocationSize(value.`timeoutSeconds`) +
-                    FfiConverterBoolean.allocationSize(value.`followRedirects`) +
-                    FfiConverterOptionalString.allocationSize(value.`userAgent`)
-            )
+            FfiConverterMapStringString.allocationSize(value.`defaultHeaders`) +
+            FfiConverterOptionalULong.allocationSize(value.`timeoutSeconds`) +
+            FfiConverterBoolean.allocationSize(value.`followRedirects`) +
+            FfiConverterOptionalString.allocationSize(value.`userAgent`)
+    )
 
     override fun write(value: VaneClientConfig, buf: ByteBuffer) {
-        FfiConverterOptionalString.write(value.`baseUrl`, buf)
-        FfiConverterMapStringString.write(value.`defaultHeaders`, buf)
-        FfiConverterOptionalULong.write(value.`timeoutSeconds`, buf)
-        FfiConverterBoolean.write(value.`followRedirects`, buf)
-        FfiConverterOptionalString.write(value.`userAgent`, buf)
+            FfiConverterOptionalString.write(value.`baseUrl`, buf)
+            FfiConverterMapStringString.write(value.`defaultHeaders`, buf)
+            FfiConverterOptionalULong.write(value.`timeoutSeconds`, buf)
+            FfiConverterBoolean.write(value.`followRedirects`, buf)
+            FfiConverterOptionalString.write(value.`userAgent`, buf)
     }
 }
 
 
-data class VaneRequest(
-    var `url`: kotlin.String,
-    var `method`: kotlin.String,
-    var `headers`: Map<kotlin.String, kotlin.String>,
-    var `queryParams`: Map<kotlin.String, kotlin.String>,
-    var `body`: kotlin.ByteArray?,
-    var `timeoutSeconds`: kotlin.ULong?,
+
+data class VaneRequest (
+    var `url`: kotlin.String, 
+    var `method`: kotlin.String, 
+    var `headers`: Map<kotlin.String, kotlin.String>, 
+    var `queryParams`: Map<kotlin.String, kotlin.String>, 
+    var `body`: kotlin.ByteArray?, 
+    var `timeoutSeconds`: kotlin.ULong?, 
     var `followRedirects`: kotlin.Boolean
 ) {
-
+    
     companion object
 }
 
 /**
  * @suppress
  */
-public object FfiConverterTypeVaneRequest : FfiConverterRustBuffer<VaneRequest> {
+public object FfiConverterTypeVaneRequest: FfiConverterRustBuffer<VaneRequest> {
     override fun read(buf: ByteBuffer): VaneRequest {
         return VaneRequest(
             FfiConverterString.read(buf),
@@ -1819,41 +1675,42 @@ public object FfiConverterTypeVaneRequest : FfiConverterRustBuffer<VaneRequest> 
 
     override fun allocationSize(value: VaneRequest) = (
             FfiConverterString.allocationSize(value.`url`) +
-                    FfiConverterString.allocationSize(value.`method`) +
-                    FfiConverterMapStringString.allocationSize(value.`headers`) +
-                    FfiConverterMapStringString.allocationSize(value.`queryParams`) +
-                    FfiConverterOptionalByteArray.allocationSize(value.`body`) +
-                    FfiConverterOptionalULong.allocationSize(value.`timeoutSeconds`) +
-                    FfiConverterBoolean.allocationSize(value.`followRedirects`)
-            )
+            FfiConverterString.allocationSize(value.`method`) +
+            FfiConverterMapStringString.allocationSize(value.`headers`) +
+            FfiConverterMapStringString.allocationSize(value.`queryParams`) +
+            FfiConverterOptionalByteArray.allocationSize(value.`body`) +
+            FfiConverterOptionalULong.allocationSize(value.`timeoutSeconds`) +
+            FfiConverterBoolean.allocationSize(value.`followRedirects`)
+    )
 
     override fun write(value: VaneRequest, buf: ByteBuffer) {
-        FfiConverterString.write(value.`url`, buf)
-        FfiConverterString.write(value.`method`, buf)
-        FfiConverterMapStringString.write(value.`headers`, buf)
-        FfiConverterMapStringString.write(value.`queryParams`, buf)
-        FfiConverterOptionalByteArray.write(value.`body`, buf)
-        FfiConverterOptionalULong.write(value.`timeoutSeconds`, buf)
-        FfiConverterBoolean.write(value.`followRedirects`, buf)
+            FfiConverterString.write(value.`url`, buf)
+            FfiConverterString.write(value.`method`, buf)
+            FfiConverterMapStringString.write(value.`headers`, buf)
+            FfiConverterMapStringString.write(value.`queryParams`, buf)
+            FfiConverterOptionalByteArray.write(value.`body`, buf)
+            FfiConverterOptionalULong.write(value.`timeoutSeconds`, buf)
+            FfiConverterBoolean.write(value.`followRedirects`, buf)
     }
 }
 
 
-data class VaneResponse(
-    var `statusCode`: kotlin.UShort,
-    var `headers`: Map<kotlin.String, kotlin.String>,
-    var `body`: kotlin.ByteArray,
-    var `isSuccess`: kotlin.Boolean,
+
+data class VaneResponse (
+    var `statusCode`: kotlin.UShort, 
+    var `headers`: Map<kotlin.String, kotlin.String>, 
+    var `body`: kotlin.ByteArray, 
+    var `isSuccess`: kotlin.Boolean, 
     var `url`: kotlin.String
 ) {
-
+    
     companion object
 }
 
 /**
  * @suppress
  */
-public object FfiConverterTypeVaneResponse : FfiConverterRustBuffer<VaneResponse> {
+public object FfiConverterTypeVaneResponse: FfiConverterRustBuffer<VaneResponse> {
     override fun read(buf: ByteBuffer): VaneResponse {
         return VaneResponse(
             FfiConverterUShort.read(buf),
@@ -1866,39 +1723,41 @@ public object FfiConverterTypeVaneResponse : FfiConverterRustBuffer<VaneResponse
 
     override fun allocationSize(value: VaneResponse) = (
             FfiConverterUShort.allocationSize(value.`statusCode`) +
-                    FfiConverterMapStringString.allocationSize(value.`headers`) +
-                    FfiConverterByteArray.allocationSize(value.`body`) +
-                    FfiConverterBoolean.allocationSize(value.`isSuccess`) +
-                    FfiConverterString.allocationSize(value.`url`)
-            )
+            FfiConverterMapStringString.allocationSize(value.`headers`) +
+            FfiConverterByteArray.allocationSize(value.`body`) +
+            FfiConverterBoolean.allocationSize(value.`isSuccess`) +
+            FfiConverterString.allocationSize(value.`url`)
+    )
 
     override fun write(value: VaneResponse, buf: ByteBuffer) {
-        FfiConverterUShort.write(value.`statusCode`, buf)
-        FfiConverterMapStringString.write(value.`headers`, buf)
-        FfiConverterByteArray.write(value.`body`, buf)
-        FfiConverterBoolean.write(value.`isSuccess`, buf)
-        FfiConverterString.write(value.`url`, buf)
+            FfiConverterUShort.write(value.`statusCode`, buf)
+            FfiConverterMapStringString.write(value.`headers`, buf)
+            FfiConverterByteArray.write(value.`body`, buf)
+            FfiConverterBoolean.write(value.`isSuccess`, buf)
+            FfiConverterString.write(value.`url`, buf)
     }
 }
 
 
-sealed class VaneException : kotlin.Exception() {
 
+
+
+sealed class VaneException: kotlin.Exception() {
+    
     class Generic(
-
+        
         val v1: kotlin.String
-    ) : VaneException() {
+        ) : VaneException() {
         override val message
-            get() = "v1=${v1}"
+            get() = "v1=${ v1 }"
     }
-
+    
 
     companion object ErrorHandler : UniffiRustCallStatusErrorHandler<VaneException> {
-        override fun lift(error_buf: RustBuffer.ByValue): VaneException =
-            FfiConverterTypeVaneError.lift(error_buf)
+        override fun lift(error_buf: RustBuffer.ByValue): VaneException = FfiConverterTypeVaneError.lift(error_buf)
     }
 
-
+    
 }
 
 /**
@@ -1906,29 +1765,28 @@ sealed class VaneException : kotlin.Exception() {
  */
 public object FfiConverterTypeVaneError : FfiConverterRustBuffer<VaneException> {
     override fun read(buf: ByteBuffer): VaneException {
+        
 
-
-        return when (buf.getInt()) {
+        return when(buf.getInt()) {
             1 -> VaneException.Generic(
                 FfiConverterString.read(buf),
-            )
-
+                )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
 
     override fun allocationSize(value: VaneException): ULong {
-        return when (value) {
+        return when(value) {
             is VaneException.Generic -> (
-                    // Add the size for the Int that specifies the variant plus the size needed for all fields
-                    4UL
-                            + FfiConverterString.allocationSize(value.v1)
-                    )
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.v1)
+            )
         }
     }
 
     override fun write(value: VaneException, buf: ByteBuffer) {
-        when (value) {
+        when(value) {
             is VaneException.Generic -> {
                 buf.putInt(1)
                 FfiConverterString.write(value.v1, buf)
@@ -1940,10 +1798,12 @@ public object FfiConverterTypeVaneError : FfiConverterRustBuffer<VaneException> 
 }
 
 
+
+
 /**
  * @suppress
  */
-public object FfiConverterOptionalULong : FfiConverterRustBuffer<kotlin.ULong?> {
+public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
     override fun read(buf: ByteBuffer): kotlin.ULong? {
         if (buf.get().toInt() == 0) {
             return null
@@ -1970,10 +1830,12 @@ public object FfiConverterOptionalULong : FfiConverterRustBuffer<kotlin.ULong?> 
 }
 
 
+
+
 /**
  * @suppress
  */
-public object FfiConverterOptionalString : FfiConverterRustBuffer<kotlin.String?> {
+public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
     override fun read(buf: ByteBuffer): kotlin.String? {
         if (buf.get().toInt() == 0) {
             return null
@@ -2000,10 +1862,12 @@ public object FfiConverterOptionalString : FfiConverterRustBuffer<kotlin.String?
 }
 
 
+
+
 /**
  * @suppress
  */
-public object FfiConverterOptionalByteArray : FfiConverterRustBuffer<kotlin.ByteArray?> {
+public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteArray?> {
     override fun read(buf: ByteBuffer): kotlin.ByteArray? {
         if (buf.get().toInt() == 0) {
             return null
@@ -2030,11 +1894,12 @@ public object FfiConverterOptionalByteArray : FfiConverterRustBuffer<kotlin.Byte
 }
 
 
+
+
 /**
  * @suppress
  */
-public object FfiConverterMapStringString :
-    FfiConverterRustBuffer<Map<kotlin.String, kotlin.String>> {
+public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.String, kotlin.String>> {
     override fun read(buf: ByteBuffer): Map<kotlin.String, kotlin.String> {
         val len = buf.getInt()
         return buildMap<kotlin.String, kotlin.String>(len) {
@@ -2050,7 +1915,7 @@ public object FfiConverterMapStringString :
         val spaceForMapSize = 4UL
         val spaceForChildren = value.map { (k, v) ->
             FfiConverterString.allocationSize(k) +
-                    FfiConverterString.allocationSize(v)
+            FfiConverterString.allocationSize(v)
         }.sum()
         return spaceForMapSize + spaceForChildren
     }
@@ -2065,50 +1930,44 @@ public object FfiConverterMapStringString :
             FfiConverterString.write(v, buf)
         }
     }
+} fun `createDefaultConfig`(): VaneClientConfig {
+            return FfiConverterTypeVaneClientConfig.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_func_create_default_config(
+        _status)
 }
-
-fun `createDefaultConfig`(): VaneClientConfig {
-    return FfiConverterTypeVaneClientConfig.lift(
-        uniffiRustCall() { _status ->
-            UniffiLib.INSTANCE.uniffi_vane_fn_func_create_default_config(
-                _status
-            )
-        }
     )
+    }
+    
+
+    @Throws(VaneException::class) fun `createVaneClient`(`config`: VaneClientConfig): VaneClient {
+            return FfiConverterTypeVaneClient.lift(
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_func_create_vane_client(
+        FfiConverterTypeVaneClientConfig.lower(`config`),_status)
 }
-
-
-@Throws(VaneException::class)
-fun `createVaneClient`(`config`: VaneClientConfig): VaneClient {
-    return FfiConverterTypeVaneClient.lift(
-        uniffiRustCallWithError(VaneException) { _status ->
-            UniffiLib.INSTANCE.uniffi_vane_fn_func_create_vane_client(
-                FfiConverterTypeVaneClientConfig.lower(`config`), _status
-            )
-        }
     )
+    }
+    
+
+    @Throws(VaneException::class) fun `parseJsonResponse`(`resp`: VaneResponse): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_func_parse_json_response(
+        FfiConverterTypeVaneResponse.lower(`resp`),_status)
 }
-
-
-@Throws(VaneException::class)
-fun `parseJsonResponse`(`resp`: VaneResponse): kotlin.String {
-    return FfiConverterString.lift(
-        uniffiRustCallWithError(VaneException) { _status ->
-            UniffiLib.INSTANCE.uniffi_vane_fn_func_parse_json_response(
-                FfiConverterTypeVaneResponse.lower(`resp`), _status
-            )
-        }
     )
+    }
+    
+
+    @Throws(VaneException::class) fun `responseBodyUtf8`(`resp`: VaneResponse): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_func_response_body_utf8(
+        FfiConverterTypeVaneResponse.lower(`resp`),_status)
 }
-
-
-@Throws(VaneException::class)
-fun `responseBodyUtf8`(`resp`: VaneResponse): kotlin.String {
-    return FfiConverterString.lift(
-        uniffiRustCallWithError(VaneException) { _status ->
-            UniffiLib.INSTANCE.uniffi_vane_fn_func_response_body_utf8(
-                FfiConverterTypeVaneResponse.lower(`resp`), _status
-            )
-        }
     )
-}
+    }
+    
+
+
