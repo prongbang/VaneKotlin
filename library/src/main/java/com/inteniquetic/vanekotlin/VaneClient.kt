@@ -72,7 +72,18 @@ suspend fun VaneClient.executeAsync(request: VaneRequest): VaneResponse {
 
 // MARK: - Retrofit-style Interface
 
-class VaneSession(private val configuration: VaneClientConfig = createDefaultConfig()) {
+typealias VaneRequestInterceptor = suspend (VaneRequest) -> VaneRequest
+typealias VaneResponseInterceptor = suspend (VaneResponse) -> VaneResponse
+typealias VaneErrorInterceptor = suspend (Throwable) -> VaneResponse?
+
+class VaneSession(
+    private val configuration: VaneClientConfig = createDefaultConfig(),
+    private val requestInterceptors: List<VaneRequestInterceptor> = emptyList(),
+    private val responseInterceptors: List<VaneResponseInterceptor> = emptyList(),
+    private val errorInterceptors: List<VaneErrorInterceptor> = emptyList()
+) {
+    private var transportExecutor: (suspend (VaneRequest) -> VaneResponse)? = null
+
     private val client: VaneClient by lazy {
         createVaneClient(configuration)
     }
@@ -82,42 +93,86 @@ class VaneSession(private val configuration: VaneClientConfig = createDefaultCon
         encodeDefaults = true
     }
 
+    internal constructor(
+        configuration: VaneClientConfig,
+        requestInterceptors: List<VaneRequestInterceptor> = emptyList(),
+        responseInterceptors: List<VaneResponseInterceptor> = emptyList(),
+        errorInterceptors: List<VaneErrorInterceptor> = emptyList(),
+        transportExecutor: suspend (VaneRequest) -> VaneResponse
+    ) : this(configuration, requestInterceptors, responseInterceptors, errorInterceptors) {
+        this.transportExecutor = transportExecutor
+    }
+
     // MARK: - Request Building
 
     fun request(url: String, method: HttpMethod = HttpMethod.GET): VaneRequestBuilder {
-        return VaneRequestBuilder(client, url, method, json)
+        return VaneRequestBuilder(url, method, json, ::execute)
     }
 
     // MARK: - Direct Methods
 
     suspend fun get(url: String): VaneResponse {
-        return client.getAsync(url)
+        return request(url, HttpMethod.GET).execute()
     }
 
     suspend fun post(url: String, body: ByteArray? = null): VaneResponse {
-        return client.postAsync(url, body)
+        val builder = request(url, HttpMethod.POST)
+        if (body != null) builder.body(body)
+        return builder.execute()
     }
 
     suspend fun put(url: String, body: ByteArray? = null): VaneResponse {
-        return client.putAsync(url, body)
+        val builder = request(url, HttpMethod.PUT)
+        if (body != null) builder.body(body)
+        return builder.execute()
     }
 
     suspend fun delete(url: String): VaneResponse {
-        return client.deleteAsync(url)
+        return request(url, HttpMethod.DELETE).execute()
     }
 
     suspend fun patch(url: String, body: ByteArray? = null): VaneResponse {
-        return client.patchAsync(url, body)
+        val builder = request(url, HttpMethod.PATCH)
+        if (body != null) builder.body(body)
+        return builder.execute()
+    }
+
+    suspend fun execute(request: VaneRequest): VaneResponse {
+        var interceptedRequest = request
+        for (interceptor in requestInterceptors) {
+            interceptedRequest = interceptor(interceptedRequest)
+        }
+
+        return try {
+            var response = (transportExecutor ?: { req -> client.executeAsync(req) })(interceptedRequest)
+            for (interceptor in responseInterceptors) {
+                response = interceptor(response)
+            }
+            response
+        } catch (throwable: Throwable) {
+            for (interceptor in errorInterceptors) {
+                val response = interceptor(throwable)
+                if (response != null) {
+                    var interceptedResponse: VaneResponse = response
+                    for (responseInterceptor in responseInterceptors) {
+                        interceptedResponse = responseInterceptor(interceptedResponse)
+                    }
+                    return interceptedResponse
+                }
+            }
+
+            throw throwable
+        }
     }
 }
 
 // MARK: - Request Builder
 
 class VaneRequestBuilder internal constructor(
-    private val client: VaneClient,
     private val url: String,
     private val method: HttpMethod,
-    val json: Json
+    val json: Json,
+    private val executor: suspend (VaneRequest) -> VaneResponse
 ) {
     private var headers = mutableMapOf<String, String>()
     private var queryParams = mutableMapOf<String, String>()
@@ -181,7 +236,7 @@ class VaneRequestBuilder internal constructor(
             timeoutSeconds = timeoutSeconds,
             followRedirects = followRedirects
         )
-        return client.executeAsync(request)
+        return executor(request)
     }
 
     suspend inline fun <reified T> responseJson(): T {
@@ -228,6 +283,79 @@ class VaneConfigurationBuilder {
         return this
     }
 
+    fun dnsOverrides(overrides: Map<String, String>): VaneConfigurationBuilder {
+        config.dnsOverrides = overrides.toMutableMap()
+        return this
+    }
+
+    fun dnsOverride(host: String, ipAddress: String): VaneConfigurationBuilder {
+        config.dnsOverrides = config.dnsOverrides.toMutableMap().apply {
+            put(host, ipAddress)
+        }
+        return this
+    }
+
+    fun proxy(url: String, authorization: String? = null): VaneConfigurationBuilder {
+        config.proxyUrl = url
+        config.proxyAuthorization = authorization
+        return this
+    }
+
+    fun proxyAuthorization(authorization: String?): VaneConfigurationBuilder {
+        config.proxyAuthorization = authorization
+        return this
+    }
+
+    fun certificatePins(pins: Map<String, List<String>>): VaneConfigurationBuilder {
+        config.certificatePins = pins.toMutableMap()
+        return this
+    }
+
+    fun certificatePin(host: String, pins: List<String>): VaneConfigurationBuilder {
+        config.certificatePins = config.certificatePins.toMutableMap().apply {
+            put(host, pins)
+        }
+        return this
+    }
+
+    fun cookiesEnabled(enabled: Boolean = true): VaneConfigurationBuilder {
+        config.cookiesEnabled = enabled
+        return this
+    }
+
+    fun connectionPooling(
+        enabled: Boolean = true,
+        maxIdleConnections: ULong = 4UL,
+        idleTimeoutSeconds: ULong = 30UL
+    ): VaneConfigurationBuilder {
+        config.connectionPoolEnabled = enabled
+        config.maxIdleConnections = maxIdleConnections
+        config.connectionIdleTimeoutSeconds = idleTimeoutSeconds
+        return this
+    }
+
+    fun retry(
+        maxAttempts: ULong,
+        initialDelayMillis: ULong = 100UL,
+        maxDelayMillis: ULong = 1_000UL,
+        retryUnsafeMethods: Boolean = false
+    ): VaneConfigurationBuilder {
+        config.retryMaxAttempts = maxAttempts
+        config.retryInitialDelayMillis = initialDelayMillis
+        config.retryMaxDelayMillis = maxDelayMillis
+        config.retryUnsafeMethods = retryUnsafeMethods
+        return this
+    }
+
+    fun bodyLimits(
+        maxRequestBodyBytes: ULong,
+        maxResponseBodyBytes: ULong
+    ): VaneConfigurationBuilder {
+        config.maxRequestBodyBytes = maxRequestBodyBytes
+        config.maxResponseBodyBytes = maxResponseBodyBytes
+        return this
+    }
+
     fun timeout(seconds: ULong): VaneConfigurationBuilder {
         config.timeoutSeconds = seconds
         return this
@@ -235,6 +363,36 @@ class VaneConfigurationBuilder {
 
     fun userAgent(agent: String): VaneConfigurationBuilder {
         config.userAgent = agent
+        return this
+    }
+
+    fun protocolMode(mode: VaneProtocolMode): VaneConfigurationBuilder {
+        config.protocolMode = mode
+        return this
+    }
+
+    fun http3ThenHttp2ThenHttp1(): VaneConfigurationBuilder {
+        config.protocolMode = VaneProtocolMode.HTTP3_THEN_HTTP2_THEN_HTTP1
+        return this
+    }
+
+    fun http3Only(): VaneConfigurationBuilder {
+        config.protocolMode = VaneProtocolMode.HTTP3_ONLY
+        return this
+    }
+
+    fun http2ThenHttp1(): VaneConfigurationBuilder {
+        config.protocolMode = VaneProtocolMode.HTTP2_THEN_HTTP1
+        return this
+    }
+
+    fun http2Only(): VaneConfigurationBuilder {
+        config.protocolMode = VaneProtocolMode.HTTP2_ONLY
+        return this
+    }
+
+    fun http1Only(): VaneConfigurationBuilder {
+        config.protocolMode = VaneProtocolMode.HTTP1_ONLY
         return this
     }
 
@@ -277,7 +435,12 @@ inline fun <reified T> VaneResponse.json(): T {
 
 val VaneResponse.prettyJson: String?
     get() = try {
-        parseJsonResponse(this)
+        val json = Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
+        json.encodeToString(Json.parseToJsonElement(String(body)))
     } catch (e: Exception) {
         null
     }

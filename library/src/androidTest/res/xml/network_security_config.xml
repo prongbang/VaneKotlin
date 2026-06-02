@@ -1,12 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- ✅ Trust all domains, all subdomains, allow cleartext (HTTP) -->
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
-            <!-- Include system default CAs -->
             <certificates src="system" />
-            <!-- Optionally include user-installed certificates -->
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
 </network-security-config>

@@ -732,8 +732,6 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
-
-
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -752,8 +750,6 @@ internal interface IntegrityCheckingUniffiLib : Library {
     fun uniffi_vane_checksum_func_create_default_config(
 ): Short
 fun uniffi_vane_checksum_func_create_vane_client(
-): Short
-fun uniffi_vane_checksum_func_parse_json_response(
 ): Short
 fun uniffi_vane_checksum_func_response_body_utf8(
 ): Short
@@ -838,8 +834,6 @@ fun uniffi_vane_fn_func_create_default_config(uniffi_out_err: UniffiRustCallStat
 ): RustBuffer.ByValue
 fun uniffi_vane_fn_func_create_vane_client(`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Pointer
-fun uniffi_vane_fn_func_parse_json_response(`resp`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-): RustBuffer.ByValue
 fun uniffi_vane_fn_func_response_body_utf8(`resp`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun ffi_vane_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -972,9 +966,6 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_func_create_vane_client() != 57471.toShort()) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_vane_checksum_func_parse_json_response() != 17500.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_func_response_body_utf8() != 21709.toShort()) {
@@ -1603,9 +1594,24 @@ public object FfiConverterTypeVaneClient: FfiConverter<VaneClient, Pointer> {
 data class VaneClientConfig (
     var `baseUrl`: kotlin.String?, 
     var `defaultHeaders`: Map<kotlin.String, kotlin.String>, 
+    var `dnsOverrides`: Map<kotlin.String, kotlin.String>, 
+    var `certificatePins`: Map<kotlin.String, List<kotlin.String>>, 
+    var `cookiesEnabled`: kotlin.Boolean, 
+    var `connectionPoolEnabled`: kotlin.Boolean, 
+    var `maxIdleConnections`: kotlin.ULong, 
+    var `connectionIdleTimeoutSeconds`: kotlin.ULong, 
+    var `retryMaxAttempts`: kotlin.ULong, 
+    var `retryInitialDelayMillis`: kotlin.ULong, 
+    var `retryMaxDelayMillis`: kotlin.ULong, 
+    var `retryUnsafeMethods`: kotlin.Boolean, 
+    var `maxRequestBodyBytes`: kotlin.ULong, 
+    var `maxResponseBodyBytes`: kotlin.ULong, 
     var `timeoutSeconds`: kotlin.ULong?, 
     var `followRedirects`: kotlin.Boolean, 
-    var `userAgent`: kotlin.String?
+    var `userAgent`: kotlin.String?, 
+    var `protocolMode`: VaneProtocolMode, 
+    var `proxyUrl`: kotlin.String?, 
+    var `proxyAuthorization`: kotlin.String?
 ) {
     
     companion object
@@ -1619,8 +1625,23 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
         return VaneClientConfig(
             FfiConverterOptionalString.read(buf),
             FfiConverterMapStringString.read(buf),
+            FfiConverterMapStringString.read(buf),
+            FfiConverterMapStringSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
             FfiConverterOptionalULong.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterTypeVaneProtocolMode.read(buf),
+            FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
         )
     }
@@ -1628,17 +1649,47 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
     override fun allocationSize(value: VaneClientConfig) = (
             FfiConverterOptionalString.allocationSize(value.`baseUrl`) +
             FfiConverterMapStringString.allocationSize(value.`defaultHeaders`) +
+            FfiConverterMapStringString.allocationSize(value.`dnsOverrides`) +
+            FfiConverterMapStringSequenceString.allocationSize(value.`certificatePins`) +
+            FfiConverterBoolean.allocationSize(value.`cookiesEnabled`) +
+            FfiConverterBoolean.allocationSize(value.`connectionPoolEnabled`) +
+            FfiConverterULong.allocationSize(value.`maxIdleConnections`) +
+            FfiConverterULong.allocationSize(value.`connectionIdleTimeoutSeconds`) +
+            FfiConverterULong.allocationSize(value.`retryMaxAttempts`) +
+            FfiConverterULong.allocationSize(value.`retryInitialDelayMillis`) +
+            FfiConverterULong.allocationSize(value.`retryMaxDelayMillis`) +
+            FfiConverterBoolean.allocationSize(value.`retryUnsafeMethods`) +
+            FfiConverterULong.allocationSize(value.`maxRequestBodyBytes`) +
+            FfiConverterULong.allocationSize(value.`maxResponseBodyBytes`) +
             FfiConverterOptionalULong.allocationSize(value.`timeoutSeconds`) +
             FfiConverterBoolean.allocationSize(value.`followRedirects`) +
-            FfiConverterOptionalString.allocationSize(value.`userAgent`)
+            FfiConverterOptionalString.allocationSize(value.`userAgent`) +
+            FfiConverterTypeVaneProtocolMode.allocationSize(value.`protocolMode`) +
+            FfiConverterOptionalString.allocationSize(value.`proxyUrl`) +
+            FfiConverterOptionalString.allocationSize(value.`proxyAuthorization`)
     )
 
     override fun write(value: VaneClientConfig, buf: ByteBuffer) {
             FfiConverterOptionalString.write(value.`baseUrl`, buf)
             FfiConverterMapStringString.write(value.`defaultHeaders`, buf)
+            FfiConverterMapStringString.write(value.`dnsOverrides`, buf)
+            FfiConverterMapStringSequenceString.write(value.`certificatePins`, buf)
+            FfiConverterBoolean.write(value.`cookiesEnabled`, buf)
+            FfiConverterBoolean.write(value.`connectionPoolEnabled`, buf)
+            FfiConverterULong.write(value.`maxIdleConnections`, buf)
+            FfiConverterULong.write(value.`connectionIdleTimeoutSeconds`, buf)
+            FfiConverterULong.write(value.`retryMaxAttempts`, buf)
+            FfiConverterULong.write(value.`retryInitialDelayMillis`, buf)
+            FfiConverterULong.write(value.`retryMaxDelayMillis`, buf)
+            FfiConverterBoolean.write(value.`retryUnsafeMethods`, buf)
+            FfiConverterULong.write(value.`maxRequestBodyBytes`, buf)
+            FfiConverterULong.write(value.`maxResponseBodyBytes`, buf)
             FfiConverterOptionalULong.write(value.`timeoutSeconds`, buf)
             FfiConverterBoolean.write(value.`followRedirects`, buf)
             FfiConverterOptionalString.write(value.`userAgent`, buf)
+            FfiConverterTypeVaneProtocolMode.write(value.`protocolMode`, buf)
+            FfiConverterOptionalString.write(value.`proxyUrl`, buf)
+            FfiConverterOptionalString.write(value.`proxyAuthorization`, buf)
     }
 }
 
@@ -1800,6 +1851,45 @@ public object FfiConverterTypeVaneError : FfiConverterRustBuffer<VaneException> 
 
 
 
+enum class VaneProtocolMode {
+    
+    /**
+     * Try HTTP/3 first, then fall back to HTTP/2 or HTTP/1.1 over TCP/TLS.
+     */
+    HTTP3_THEN_HTTP2_THEN_HTTP1,
+    HTTP3_ONLY,
+    /**
+     * Use hyper over TCP/TLS with ALPN for HTTP/2 or HTTP/1.1.
+     */
+    HTTP2_THEN_HTTP1,
+    HTTP2_ONLY,
+    HTTP1_ONLY;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeVaneProtocolMode: FfiConverterRustBuffer<VaneProtocolMode> {
+    override fun read(buf: ByteBuffer) = try {
+        VaneProtocolMode.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: VaneProtocolMode) = 4UL
+
+    override fun write(value: VaneProtocolMode, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
 /**
  * @suppress
  */
@@ -1899,6 +1989,34 @@ public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteA
 /**
  * @suppress
  */
+public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
+    override fun read(buf: ByteBuffer): List<kotlin.String> {
+        val len = buf.getInt()
+        return List<kotlin.String>(len) {
+            FfiConverterString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.String>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.String, kotlin.String>> {
     override fun read(buf: ByteBuffer): Map<kotlin.String, kotlin.String> {
         val len = buf.getInt()
@@ -1930,6 +2048,45 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
             FfiConverterString.write(v, buf)
         }
     }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<kotlin.String, List<kotlin.String>>> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, List<kotlin.String>> {
+        val len = buf.getInt()
+        return buildMap<kotlin.String, List<kotlin.String>>(len) {
+            repeat(len) {
+                val k = FfiConverterString.read(buf)
+                val v = FfiConverterSequenceString.read(buf)
+                this[k] = v
+            }
+        }
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, List<kotlin.String>>): ULong {
+        val spaceForMapSize = 4UL
+        val spaceForChildren = value.map { (k, v) ->
+            FfiConverterString.allocationSize(k) +
+            FfiConverterSequenceString.allocationSize(v)
+        }.sum()
+        return spaceForMapSize + spaceForChildren
+    }
+
+    override fun write(value: Map<kotlin.String, List<kotlin.String>>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        // The parens on `(k, v)` here ensure we're calling the right method,
+        // which is important for compatibility with older android devices.
+        // Ref https://blog.danlew.net/2017/03/16/kotlin-puzzler-whose-line-is-it-anyways/
+        value.forEach { (k, v) ->
+            FfiConverterString.write(k, buf)
+            FfiConverterSequenceString.write(v, buf)
+        }
+    }
 } fun `createDefaultConfig`(): VaneClientConfig {
             return FfiConverterTypeVaneClientConfig.lift(
     uniffiRustCall() { _status ->
@@ -1945,16 +2102,6 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
     uniffiRustCallWithError(VaneException) { _status ->
     UniffiLib.INSTANCE.uniffi_vane_fn_func_create_vane_client(
         FfiConverterTypeVaneClientConfig.lower(`config`),_status)
-}
-    )
-    }
-    
-
-    @Throws(VaneException::class) fun `parseJsonResponse`(`resp`: VaneResponse): kotlin.String {
-            return FfiConverterString.lift(
-    uniffiRustCallWithError(VaneException) { _status ->
-    UniffiLib.INSTANCE.uniffi_vane_fn_func_parse_json_response(
-        FfiConverterTypeVaneResponse.lower(`resp`),_status)
 }
     )
     }
