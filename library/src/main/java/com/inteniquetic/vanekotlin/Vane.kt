@@ -1854,12 +1854,12 @@ public object FfiConverterTypeVaneError : FfiConverterRustBuffer<VaneException> 
 enum class VaneProtocolMode {
     
     /**
-     * Try HTTP/3 first, then fall back to HTTP/2 or HTTP/1.1 over TCP/TLS.
+     * Kept for source compatibility; this build uses HTTP/3 only.
      */
     HTTP3_THEN_HTTP2_THEN_HTTP1,
     HTTP3_ONLY,
     /**
-     * Use hyper over TCP/TLS with ALPN for HTTP/2 or HTTP/1.1.
+     * Kept for source compatibility; HTTP/2 and HTTP/1.1 are unsupported.
      */
     HTTP2_THEN_HTTP1,
     HTTP2_ONLY,
