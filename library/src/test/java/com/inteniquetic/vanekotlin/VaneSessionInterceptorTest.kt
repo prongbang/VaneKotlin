@@ -90,4 +90,57 @@ class VaneSessionInterceptorTest {
 
         assertTrue("Expected request interceptor to throw", false)
     }
+
+    @Test
+    fun requestBodyHelpersBuildTextAndFormRequests() = runBlocking {
+        var capturedRequest: VaneRequest? = null
+        val session = VaneSession(
+            configuration = testConfig(),
+            transportExecutor = { request ->
+                capturedRequest = request
+                VaneResponse(
+                    statusCode = 204u,
+                    headers = emptyMap(),
+                    body = ByteArray(0),
+                    isSuccess = true,
+                    url = "test://synthetic"
+                )
+            }
+        )
+
+        session.request("https://example.com/post", HttpMethod.POST)
+            .textBody("hello")
+            .execute()
+
+        assertEquals("text/plain; charset=utf-8", capturedRequest?.headers?.get("Content-Type"))
+        assertEquals("hello", String(capturedRequest?.body ?: ByteArray(0)))
+
+        session.request("https://example.com/post", HttpMethod.POST)
+            .formBody(mapOf("space" to "hello world", "token" to "a&b"))
+            .execute()
+
+        assertEquals("application/x-www-form-urlencoded", capturedRequest?.headers?.get("Content-Type"))
+        assertEquals("space=hello+world&token=a%26b", String(capturedRequest?.body ?: ByteArray(0)))
+    }
+
+    @Test
+    fun responseValidationHelpersThrowOnUnexpectedStatus() {
+        val response = VaneResponse(
+            statusCode = 404u,
+            headers = emptyMap(),
+            body = "missing".toByteArray(),
+            isSuccess = false,
+            url = "https://example.com/missing"
+        )
+
+        assertEquals("missing", response.text)
+        try {
+            response.validateStatus()
+        } catch (error: VaneHttpException) {
+            assertEquals(404u.toUShort(), error.statusCode)
+            return
+        }
+
+        assertTrue("Expected VaneHttpException", false)
+    }
 }

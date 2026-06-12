@@ -1,6 +1,8 @@
 package com.inteniquetic.vanekotlin
 
 import android.util.Log
+import java.net.URLEncoder
+import java.nio.charset.Charset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -207,10 +209,31 @@ class VaneRequestBuilder internal constructor(
         return this
     }
 
+    fun textBody(
+        text: String,
+        charset: Charset = Charsets.UTF_8,
+        contentType: String = "text/plain; charset=utf-8"
+    ): VaneRequestBuilder {
+        this.body = text.toByteArray(charset)
+        defaultHeader("Content-Type", contentType)
+        return this
+    }
+
     inline fun <reified T> jsonBody(obj: T): VaneRequestBuilder {
         val jsonString = json.encodeToString(obj)
         this.body = jsonString.toByteArray()
-        header("Content-Type", "application/json")
+        defaultHeader("Content-Type", "application/json")
+        return this
+    }
+
+    fun formBody(fields: Map<String, String>): VaneRequestBuilder {
+        this.body = fields.entries
+            .sortedBy { it.key }
+            .joinToString("&") { (key, value) ->
+                "${formEncode(key)}=${formEncode(value)}"
+            }
+            .toByteArray(Charsets.UTF_8)
+        defaultHeader("Content-Type", "application/x-www-form-urlencoded")
         return this
     }
 
@@ -239,32 +262,35 @@ class VaneRequestBuilder internal constructor(
         return executor(request)
     }
 
-    suspend inline fun <reified T> responseJson(): T {
-        val response = execute()
+    suspend fun validateStatus(range: UIntRange = 200u..299u): VaneResponse {
+        return execute().validateStatus(range)
+    }
 
-        if (!response.isSuccess) {
-            throw VaneHttpException(
-                message = "Request failed with status ${response.statusCode}",
-                statusCode = response.statusCode,
-                response = response
-            )
-        }
+    suspend fun responseBytes(): ByteArray {
+        return validateStatus().body
+    }
+
+    suspend inline fun <reified T> responseJson(): T {
+        val response = validateStatus()
 
         return json.decodeFromString<T>(String(response.body))
     }
 
     suspend fun responseString(): String {
-        val response = execute()
-
-        if (!response.isSuccess) {
-            throw VaneHttpException(
-                message = "Request failed with status ${response.statusCode}",
-                statusCode = response.statusCode,
-                response = response
-            )
-        }
+        val response = validateStatus()
 
         return String(response.body)
+    }
+
+    @PublishedApi
+    internal fun defaultHeader(key: String, value: String) {
+        if (headers.keys.none { it.equals(key, ignoreCase = true) }) {
+            headers[key] = value
+        }
+    }
+
+    private fun formEncode(value: String): String {
+        return URLEncoder.encode(value, Charsets.UTF_8.name())
     }
 }
 
@@ -424,6 +450,20 @@ class VaneNetworkException(
 
 val VaneResponse.isSuccessful: Boolean
     get() = isSuccess
+
+fun VaneResponse.validateStatus(range: UIntRange = 200u..299u): VaneResponse {
+    if (statusCode.toUInt() !in range) {
+        throw VaneHttpException(
+            message = "Request failed with status $statusCode",
+            statusCode = statusCode,
+            response = this
+        )
+    }
+    return this
+}
+
+val VaneResponse.text: String
+    get() = String(body)
 
 inline fun <reified T> VaneResponse.json(): T {
     val json = Json {
