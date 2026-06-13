@@ -3,7 +3,12 @@ package com.inteniquetic.vanekotlin
 import android.util.Log
 import java.net.URLEncoder
 import java.nio.charset.Charset
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -77,13 +82,36 @@ suspend fun VaneClient.executeAsync(request: VaneRequest): VaneResponse {
 typealias VaneRequestInterceptor = suspend (VaneRequest) -> VaneRequest
 typealias VaneResponseInterceptor = suspend (VaneResponse) -> VaneResponse
 typealias VaneErrorInterceptor = suspend (Throwable) -> VaneResponse?
+typealias VaneProgressCallback = (transferred: ULong, total: ULong) -> Unit
+
+data class VaneMultipartFile(
+    val fieldName: String,
+    val bytes: ByteArray,
+    val fileName: String = fieldName,
+    val contentType: String = "application/octet-stream"
+)
+
+internal object VaneProgressBridge {
+    var create: () -> ULong = { createProgress() }
+    var snapshot: (ULong) -> VaneProgressSnapshot = { id -> progressSnapshotById(id) }
+    var free: (ULong) -> Unit = { id -> freeProgress(id) }
+
+    fun reset() {
+        create = { createProgress() }
+        snapshot = { id -> progressSnapshotById(id) }
+        free = { id -> freeProgress(id) }
+    }
+}
 
 class VaneSession(
     private val configuration: VaneClientConfig = createDefaultConfig(),
-    private val requestInterceptors: List<VaneRequestInterceptor> = emptyList(),
-    private val responseInterceptors: List<VaneResponseInterceptor> = emptyList(),
-    private val errorInterceptors: List<VaneErrorInterceptor> = emptyList()
+    requestInterceptors: List<VaneRequestInterceptor> = emptyList(),
+    responseInterceptors: List<VaneResponseInterceptor> = emptyList(),
+    errorInterceptors: List<VaneErrorInterceptor> = emptyList()
 ) {
+    private val requestInterceptors = requestInterceptors.toMutableList()
+    private val responseInterceptors = responseInterceptors.toMutableList()
+    private val errorInterceptors = errorInterceptors.toMutableList()
     private var transportExecutor: (suspend (VaneRequest) -> VaneResponse)? = null
 
     private val client: VaneClient by lazy {
@@ -109,6 +137,43 @@ class VaneSession(
 
     fun request(url: String, method: HttpMethod = HttpMethod.GET): VaneRequestBuilder {
         return VaneRequestBuilder(url, method, json, ::execute)
+    }
+
+    fun addRequestInterceptor(interceptor: VaneRequestInterceptor): VaneSession {
+        requestInterceptors += interceptor
+        return this
+    }
+
+    fun addResponseInterceptor(interceptor: VaneResponseInterceptor): VaneSession {
+        responseInterceptors += interceptor
+        return this
+    }
+
+    fun addErrorInterceptor(interceptor: VaneErrorInterceptor): VaneSession {
+        errorInterceptors += interceptor
+        return this
+    }
+
+    fun clearInterceptors(): VaneSession {
+        requestInterceptors.clear()
+        responseInterceptors.clear()
+        errorInterceptors.clear()
+        return this
+    }
+
+    fun setCertificatePins(host: String, pins: List<String>): VaneSession {
+        client.setCertificatePins(host, pins)
+        return this
+    }
+
+    fun addCertificatePin(host: String, pin: String): VaneSession {
+        client.addCertificatePin(host, pin)
+        return this
+    }
+
+    fun clearCertificatePins(host: String): VaneSession {
+        client.clearCertificatePins(host)
+        return this
     }
 
     // MARK: - Direct Methods
@@ -139,24 +204,61 @@ class VaneSession(
         return builder.execute()
     }
 
+    suspend inline fun <reified T> postJson(url: String, body: T): VaneResponse {
+        return request(url, HttpMethod.POST)
+            .jsonBody(body)
+            .execute()
+    }
+
+    suspend fun postForm(url: String, fields: Map<String, String>): VaneResponse {
+        return request(url, HttpMethod.POST)
+            .formBody(fields)
+            .execute()
+    }
+
+    suspend fun uploadFile(
+        url: String,
+        path: String,
+        method: HttpMethod = HttpMethod.POST,
+        onUploadProgress: VaneProgressCallback? = null,
+        onDownloadProgress: VaneProgressCallback? = null
+    ): VaneResponse {
+        val builder = request(url, method)
+            .bodyFile(path)
+        if (onUploadProgress != null) builder.onUploadProgress(onUploadProgress)
+        if (onDownloadProgress != null) builder.onDownloadProgress(onDownloadProgress)
+        return builder.execute()
+    }
+
+    suspend fun download(
+        url: String,
+        outputPath: String,
+        onDownloadProgress: VaneProgressCallback? = null
+    ): VaneResponse {
+        val builder = request(url, HttpMethod.GET)
+            .downloadToFile(outputPath)
+        if (onDownloadProgress != null) builder.onDownloadProgress(onDownloadProgress)
+        return builder.execute()
+    }
+
     suspend fun execute(request: VaneRequest): VaneResponse {
         var interceptedRequest = request
-        for (interceptor in requestInterceptors) {
+        for (interceptor in requestInterceptors.toList()) {
             interceptedRequest = interceptor(interceptedRequest)
         }
 
         return try {
             var response = (transportExecutor ?: { req -> client.executeAsync(req) })(interceptedRequest)
-            for (interceptor in responseInterceptors) {
+            for (interceptor in responseInterceptors.toList()) {
                 response = interceptor(response)
             }
             response
         } catch (throwable: Throwable) {
-            for (interceptor in errorInterceptors) {
+            for (interceptor in errorInterceptors.toList()) {
                 val response = interceptor(throwable)
                 if (response != null) {
                     var interceptedResponse: VaneResponse = response
-                    for (responseInterceptor in responseInterceptors) {
+                    for (responseInterceptor in responseInterceptors.toList()) {
                         interceptedResponse = responseInterceptor(interceptedResponse)
                     }
                     return interceptedResponse
@@ -179,6 +281,10 @@ class VaneRequestBuilder internal constructor(
     private var headers = mutableMapOf<String, String>()
     private var queryParams = mutableMapOf<String, String>()
     var body: ByteArray? = null
+    private var bodyFilePath: String? = null
+    private var responseBodyPath: String? = null
+    private var uploadProgress: VaneProgressCallback? = null
+    private var downloadProgress: VaneProgressCallback? = null
     private var timeoutSeconds: ULong? = null
     private var followRedirects = true
 
@@ -206,6 +312,69 @@ class VaneRequestBuilder internal constructor(
 
     fun body(body: ByteArray): VaneRequestBuilder {
         this.body = body
+        bodyFilePath = null
+        return this
+    }
+
+    fun bodyFile(path: String): VaneRequestBuilder {
+        body = null
+        bodyFilePath = path
+        return this
+    }
+
+    fun downloadToFile(path: String): VaneRequestBuilder {
+        responseBodyPath = path
+        return this
+    }
+
+    fun onUploadProgress(callback: VaneProgressCallback): VaneRequestBuilder {
+        uploadProgress = callback
+        return this
+    }
+
+    fun onDownloadProgress(callback: VaneProgressCallback): VaneRequestBuilder {
+        downloadProgress = callback
+        return this
+    }
+
+    fun multipart(
+        fields: Map<String, String> = emptyMap(),
+        files: List<VaneMultipartFile> = emptyList()
+    ): VaneRequestBuilder {
+        val boundary = "vane-${System.nanoTime()}"
+        val chunks = mutableListOf<ByteArray>()
+        fun append(value: String) {
+            chunks += value.toByteArray(Charsets.UTF_8)
+        }
+
+        for ((key, value) in fields.toSortedMap()) {
+            append("--$boundary\r\n")
+            append("Content-Disposition: form-data; name=\"$key\"\r\n\r\n")
+            append(value)
+            append("\r\n")
+        }
+
+        for (file in files) {
+            append("--$boundary\r\n")
+            append(
+                "Content-Disposition: form-data; name=\"${file.fieldName}\"; filename=\"${file.fileName}\"\r\n"
+            )
+            append("Content-Type: ${file.contentType}\r\n\r\n")
+            chunks += file.bytes
+            append("\r\n")
+        }
+
+        append("--$boundary--\r\n")
+        val totalSize = chunks.sumOf { it.size }
+        val multipartBody = ByteArray(totalSize)
+        var offset = 0
+        for (chunk in chunks) {
+            chunk.copyInto(multipartBody, offset)
+            offset += chunk.size
+        }
+
+        body(multipartBody)
+        defaultHeader("Content-Type", "multipart/form-data; boundary=$boundary")
         return this
     }
 
@@ -214,25 +383,27 @@ class VaneRequestBuilder internal constructor(
         charset: Charset = Charsets.UTF_8,
         contentType: String = "text/plain; charset=utf-8"
     ): VaneRequestBuilder {
-        this.body = text.toByteArray(charset)
+        body(text.toByteArray(charset))
         defaultHeader("Content-Type", contentType)
         return this
     }
 
     inline fun <reified T> jsonBody(obj: T): VaneRequestBuilder {
         val jsonString = json.encodeToString(obj)
-        this.body = jsonString.toByteArray()
+        body(jsonString.toByteArray())
         defaultHeader("Content-Type", "application/json")
         return this
     }
 
     fun formBody(fields: Map<String, String>): VaneRequestBuilder {
-        this.body = fields.entries
-            .sortedBy { it.key }
-            .joinToString("&") { (key, value) ->
-                "${formEncode(key)}=${formEncode(value)}"
-            }
-            .toByteArray(Charsets.UTF_8)
+        body(
+            fields.entries
+                .sortedBy { it.key }
+                .joinToString("&") { (key, value) ->
+                    "${formEncode(key)}=${formEncode(value)}"
+                }
+                .toByteArray(Charsets.UTF_8)
+        )
         defaultHeader("Content-Type", "application/x-www-form-urlencoded")
         return this
     }
@@ -249,17 +420,47 @@ class VaneRequestBuilder internal constructor(
 
     // MARK: - Execution
 
-    suspend fun execute(): VaneResponse {
+    suspend fun execute(): VaneResponse = coroutineScope {
+        val progressId = if (uploadProgress != null || downloadProgress != null) {
+            VaneProgressBridge.create()
+        } else {
+            null
+        }
+        val progressJob = progressId?.let { id ->
+            launch(Dispatchers.Default) {
+                while (isActive) {
+                    val progress = VaneProgressBridge.snapshot(id)
+                    uploadProgress?.invoke(progress.uploadSent, progress.uploadTotal)
+                    downloadProgress?.invoke(progress.downloadReceived, progress.downloadTotal)
+                    if (progress.done) break
+                    delay(100)
+                }
+            }
+        }
         val request = VaneRequest(
             url = url,
             method = method.value,
             headers = headers,
             queryParams = queryParams,
             body = body,
+            bodyFilePath = bodyFilePath,
+            responseBodyPath = responseBodyPath,
+            cancelTokenId = null,
+            progressId = progressId,
             timeoutSeconds = timeoutSeconds,
             followRedirects = followRedirects
         )
-        return executor(request)
+        try {
+            executor(request)
+        } finally {
+            if (progressId != null) {
+                progressJob?.cancelAndJoin()
+                val progress = VaneProgressBridge.snapshot(progressId)
+                uploadProgress?.invoke(progress.uploadSent, progress.uploadTotal)
+                downloadProgress?.invoke(progress.downloadReceived, progress.downloadTotal)
+                VaneProgressBridge.free(progressId)
+            }
+        }
     }
 
     suspend fun validateStatus(range: UIntRange = 200u..299u): VaneResponse {
@@ -346,6 +547,11 @@ class VaneConfigurationBuilder {
 
     fun cookiesEnabled(enabled: Boolean = true): VaneConfigurationBuilder {
         config.cookiesEnabled = enabled
+        return this
+    }
+
+    fun cookiePersistencePath(path: String?): VaneConfigurationBuilder {
+        config.cookiePersistencePath = path
         return this
     }
 

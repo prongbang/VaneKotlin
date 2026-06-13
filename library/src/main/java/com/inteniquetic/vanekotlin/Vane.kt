@@ -732,6 +732,18 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -749,9 +761,19 @@ internal interface IntegrityCheckingUniffiLib : Library {
     // Integrity check functions only
     fun uniffi_vane_checksum_func_create_default_config(
 ): Short
+fun uniffi_vane_checksum_func_create_progress(
+): Short
 fun uniffi_vane_checksum_func_create_vane_client(
 ): Short
+fun uniffi_vane_checksum_func_free_progress(
+): Short
+fun uniffi_vane_checksum_func_progress_snapshot_by_id(
+): Short
 fun uniffi_vane_checksum_func_response_body_utf8(
+): Short
+fun uniffi_vane_checksum_method_vaneclient_add_certificate_pin(
+): Short
+fun uniffi_vane_checksum_method_vaneclient_clear_certificate_pins(
 ): Short
 fun uniffi_vane_checksum_method_vaneclient_delete_request(
 ): Short
@@ -764,6 +786,8 @@ fun uniffi_vane_checksum_method_vaneclient_patch_request(
 fun uniffi_vane_checksum_method_vaneclient_post_request(
 ): Short
 fun uniffi_vane_checksum_method_vaneclient_put_request(
+): Short
+fun uniffi_vane_checksum_method_vaneclient_set_certificate_pins(
 ): Short
 fun ffi_vane_uniffi_contract_version(
 ): Int
@@ -818,6 +842,10 @@ internal interface UniffiLib : Library {
 ): Pointer
 fun uniffi_vane_fn_free_vaneclient(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+fun uniffi_vane_fn_method_vaneclient_add_certificate_pin(`ptr`: Pointer,`host`: RustBuffer.ByValue,`pin`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_vane_fn_method_vaneclient_clear_certificate_pins(`ptr`: Pointer,`host`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 fun uniffi_vane_fn_method_vaneclient_delete_request(`ptr`: Pointer,`url`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_vane_fn_method_vaneclient_execute_request(`ptr`: Pointer,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -830,10 +858,18 @@ fun uniffi_vane_fn_method_vaneclient_post_request(`ptr`: Pointer,`url`: RustBuff
 ): RustBuffer.ByValue
 fun uniffi_vane_fn_method_vaneclient_put_request(`ptr`: Pointer,`url`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_vane_fn_method_vaneclient_set_certificate_pins(`ptr`: Pointer,`host`: RustBuffer.ByValue,`pins`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 fun uniffi_vane_fn_func_create_default_config(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_vane_fn_func_create_progress(uniffi_out_err: UniffiRustCallStatus, 
+): Long
 fun uniffi_vane_fn_func_create_vane_client(`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Pointer
+fun uniffi_vane_fn_func_free_progress(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_vane_fn_func_progress_snapshot_by_id(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_vane_fn_func_response_body_utf8(`resp`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun ffi_vane_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -965,10 +1001,25 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_vane_checksum_func_create_default_config() != 54371.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_vane_checksum_func_create_progress() != 52627.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_vane_checksum_func_create_vane_client() != 57471.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_vane_checksum_func_free_progress() != 42043.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_func_progress_snapshot_by_id() != 50998.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_vane_checksum_func_response_body_utf8() != 21709.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_method_vaneclient_add_certificate_pin() != 4284.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_method_vaneclient_clear_certificate_pins() != 50096.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_method_vaneclient_delete_request() != 44430.toShort()) {
@@ -987,6 +1038,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_method_vaneclient_put_request() != 13810.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_method_vaneclient_set_certificate_pins() != 37780.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1378,6 +1432,10 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 
 public interface VaneClientInterface {
     
+    fun `addCertificatePin`(`host`: kotlin.String, `pin`: kotlin.String)
+    
+    fun `clearCertificatePins`(`host`: kotlin.String)
+    
     fun `deleteRequest`(`url`: kotlin.String): VaneResponse
     
     fun `executeRequest`(`request`: VaneRequest): VaneResponse
@@ -1389,6 +1447,8 @@ public interface VaneClientInterface {
     fun `postRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse
     
     fun `putRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse
+    
+    fun `setCertificatePins`(`host`: kotlin.String, `pins`: List<kotlin.String>)
     
     companion object
 }
@@ -1476,6 +1536,30 @@ open class VaneClient: Disposable, AutoCloseable, VaneClientInterface
     }
 
     
+    @Throws(VaneException::class)override fun `addCertificatePin`(`host`: kotlin.String, `pin`: kotlin.String)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_add_certificate_pin(
+        it, FfiConverterString.lower(`host`),FfiConverterString.lower(`pin`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(VaneException::class)override fun `clearCertificatePins`(`host`: kotlin.String)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_clear_certificate_pins(
+        it, FfiConverterString.lower(`host`),_status)
+}
+    }
+    
+    
+
+    
     @Throws(VaneException::class)override fun `deleteRequest`(`url`: kotlin.String): VaneResponse {
             return FfiConverterTypeVaneResponse.lift(
     callWithPointer {
@@ -1554,6 +1638,18 @@ open class VaneClient: Disposable, AutoCloseable, VaneClientInterface
     
 
     
+    @Throws(VaneException::class)override fun `setCertificatePins`(`host`: kotlin.String, `pins`: List<kotlin.String>)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_method_vaneclient_set_certificate_pins(
+        it, FfiConverterString.lower(`host`),FfiConverterSequenceString.lower(`pins`),_status)
+}
+    }
+    
+    
+
+    
 
     
     
@@ -1597,6 +1693,7 @@ data class VaneClientConfig (
     var `dnsOverrides`: Map<kotlin.String, kotlin.String>, 
     var `certificatePins`: Map<kotlin.String, List<kotlin.String>>, 
     var `cookiesEnabled`: kotlin.Boolean, 
+    var `cookiePersistencePath`: kotlin.String?, 
     var `connectionPoolEnabled`: kotlin.Boolean, 
     var `maxIdleConnections`: kotlin.ULong, 
     var `connectionIdleTimeoutSeconds`: kotlin.ULong, 
@@ -1628,6 +1725,7 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
             FfiConverterMapStringString.read(buf),
             FfiConverterMapStringSequenceString.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
@@ -1652,6 +1750,7 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
             FfiConverterMapStringString.allocationSize(value.`dnsOverrides`) +
             FfiConverterMapStringSequenceString.allocationSize(value.`certificatePins`) +
             FfiConverterBoolean.allocationSize(value.`cookiesEnabled`) +
+            FfiConverterOptionalString.allocationSize(value.`cookiePersistencePath`) +
             FfiConverterBoolean.allocationSize(value.`connectionPoolEnabled`) +
             FfiConverterULong.allocationSize(value.`maxIdleConnections`) +
             FfiConverterULong.allocationSize(value.`connectionIdleTimeoutSeconds`) +
@@ -1675,6 +1774,7 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
             FfiConverterMapStringString.write(value.`dnsOverrides`, buf)
             FfiConverterMapStringSequenceString.write(value.`certificatePins`, buf)
             FfiConverterBoolean.write(value.`cookiesEnabled`, buf)
+            FfiConverterOptionalString.write(value.`cookiePersistencePath`, buf)
             FfiConverterBoolean.write(value.`connectionPoolEnabled`, buf)
             FfiConverterULong.write(value.`maxIdleConnections`, buf)
             FfiConverterULong.write(value.`connectionIdleTimeoutSeconds`, buf)
@@ -1695,12 +1795,60 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
 
 
 
+data class VaneProgressSnapshot (
+    var `uploadSent`: kotlin.ULong, 
+    var `uploadTotal`: kotlin.ULong, 
+    var `downloadReceived`: kotlin.ULong, 
+    var `downloadTotal`: kotlin.ULong, 
+    var `done`: kotlin.Boolean
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeVaneProgressSnapshot: FfiConverterRustBuffer<VaneProgressSnapshot> {
+    override fun read(buf: ByteBuffer): VaneProgressSnapshot {
+        return VaneProgressSnapshot(
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: VaneProgressSnapshot) = (
+            FfiConverterULong.allocationSize(value.`uploadSent`) +
+            FfiConverterULong.allocationSize(value.`uploadTotal`) +
+            FfiConverterULong.allocationSize(value.`downloadReceived`) +
+            FfiConverterULong.allocationSize(value.`downloadTotal`) +
+            FfiConverterBoolean.allocationSize(value.`done`)
+    )
+
+    override fun write(value: VaneProgressSnapshot, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`uploadSent`, buf)
+            FfiConverterULong.write(value.`uploadTotal`, buf)
+            FfiConverterULong.write(value.`downloadReceived`, buf)
+            FfiConverterULong.write(value.`downloadTotal`, buf)
+            FfiConverterBoolean.write(value.`done`, buf)
+    }
+}
+
+
+
 data class VaneRequest (
     var `url`: kotlin.String, 
     var `method`: kotlin.String, 
     var `headers`: Map<kotlin.String, kotlin.String>, 
     var `queryParams`: Map<kotlin.String, kotlin.String>, 
     var `body`: kotlin.ByteArray?, 
+    var `bodyFilePath`: kotlin.String?, 
+    var `responseBodyPath`: kotlin.String?, 
+    var `cancelTokenId`: kotlin.ULong?, 
+    var `progressId`: kotlin.ULong?, 
     var `timeoutSeconds`: kotlin.ULong?, 
     var `followRedirects`: kotlin.Boolean
 ) {
@@ -1719,6 +1867,10 @@ public object FfiConverterTypeVaneRequest: FfiConverterRustBuffer<VaneRequest> {
             FfiConverterMapStringString.read(buf),
             FfiConverterMapStringString.read(buf),
             FfiConverterOptionalByteArray.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
             FfiConverterOptionalULong.read(buf),
             FfiConverterBoolean.read(buf),
         )
@@ -1730,6 +1882,10 @@ public object FfiConverterTypeVaneRequest: FfiConverterRustBuffer<VaneRequest> {
             FfiConverterMapStringString.allocationSize(value.`headers`) +
             FfiConverterMapStringString.allocationSize(value.`queryParams`) +
             FfiConverterOptionalByteArray.allocationSize(value.`body`) +
+            FfiConverterOptionalString.allocationSize(value.`bodyFilePath`) +
+            FfiConverterOptionalString.allocationSize(value.`responseBodyPath`) +
+            FfiConverterOptionalULong.allocationSize(value.`cancelTokenId`) +
+            FfiConverterOptionalULong.allocationSize(value.`progressId`) +
             FfiConverterOptionalULong.allocationSize(value.`timeoutSeconds`) +
             FfiConverterBoolean.allocationSize(value.`followRedirects`)
     )
@@ -1740,6 +1896,10 @@ public object FfiConverterTypeVaneRequest: FfiConverterRustBuffer<VaneRequest> {
             FfiConverterMapStringString.write(value.`headers`, buf)
             FfiConverterMapStringString.write(value.`queryParams`, buf)
             FfiConverterOptionalByteArray.write(value.`body`, buf)
+            FfiConverterOptionalString.write(value.`bodyFilePath`, buf)
+            FfiConverterOptionalString.write(value.`responseBodyPath`, buf)
+            FfiConverterOptionalULong.write(value.`cancelTokenId`, buf)
+            FfiConverterOptionalULong.write(value.`progressId`, buf)
             FfiConverterOptionalULong.write(value.`timeoutSeconds`, buf)
             FfiConverterBoolean.write(value.`followRedirects`, buf)
     }
@@ -1751,6 +1911,7 @@ data class VaneResponse (
     var `statusCode`: kotlin.UShort, 
     var `headers`: Map<kotlin.String, kotlin.String>, 
     var `body`: kotlin.ByteArray, 
+    var `bodyFilePath`: kotlin.String?, 
     var `isSuccess`: kotlin.Boolean, 
     var `url`: kotlin.String
 ) {
@@ -1767,6 +1928,7 @@ public object FfiConverterTypeVaneResponse: FfiConverterRustBuffer<VaneResponse>
             FfiConverterUShort.read(buf),
             FfiConverterMapStringString.read(buf),
             FfiConverterByteArray.read(buf),
+            FfiConverterOptionalString.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
         )
@@ -1776,6 +1938,7 @@ public object FfiConverterTypeVaneResponse: FfiConverterRustBuffer<VaneResponse>
             FfiConverterUShort.allocationSize(value.`statusCode`) +
             FfiConverterMapStringString.allocationSize(value.`headers`) +
             FfiConverterByteArray.allocationSize(value.`body`) +
+            FfiConverterOptionalString.allocationSize(value.`bodyFilePath`) +
             FfiConverterBoolean.allocationSize(value.`isSuccess`) +
             FfiConverterString.allocationSize(value.`url`)
     )
@@ -1784,6 +1947,7 @@ public object FfiConverterTypeVaneResponse: FfiConverterRustBuffer<VaneResponse>
             FfiConverterUShort.write(value.`statusCode`, buf)
             FfiConverterMapStringString.write(value.`headers`, buf)
             FfiConverterByteArray.write(value.`body`, buf)
+            FfiConverterOptionalString.write(value.`bodyFilePath`, buf)
             FfiConverterBoolean.write(value.`isSuccess`, buf)
             FfiConverterString.write(value.`url`, buf)
     }
@@ -2096,12 +2260,38 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     )
     }
     
+ fun `createProgress`(): kotlin.ULong {
+            return FfiConverterULong.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_func_create_progress(
+        _status)
+}
+    )
+    }
+    
 
     @Throws(VaneException::class) fun `createVaneClient`(`config`: VaneClientConfig): VaneClient {
             return FfiConverterTypeVaneClient.lift(
     uniffiRustCallWithError(VaneException) { _status ->
     UniffiLib.INSTANCE.uniffi_vane_fn_func_create_vane_client(
         FfiConverterTypeVaneClientConfig.lower(`config`),_status)
+}
+    )
+    }
+    
+ fun `freeProgress`(`id`: kotlin.ULong)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_func_free_progress(
+        FfiConverterULong.lower(`id`),_status)
+}
+    
+    
+ fun `progressSnapshotById`(`id`: kotlin.ULong): VaneProgressSnapshot {
+            return FfiConverterTypeVaneProgressSnapshot.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_vane_fn_func_progress_snapshot_by_id(
+        FfiConverterULong.lower(`id`),_status)
 }
     )
     }

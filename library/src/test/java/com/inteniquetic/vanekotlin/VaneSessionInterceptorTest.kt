@@ -12,6 +12,7 @@ class VaneSessionInterceptorTest {
         dnsOverrides = emptyMap(),
         certificatePins = emptyMap(),
         cookiesEnabled = false,
+        cookiePersistencePath = null,
         connectionPoolEnabled = false,
         maxIdleConnections = 4u,
         connectionIdleTimeoutSeconds = 30u,
@@ -47,6 +48,7 @@ class VaneSessionInterceptorTest {
                     statusCode = 299u,
                     headers = emptyMap(),
                     body = "synthetic".toByteArray(),
+                    bodyFilePath = null,
                     isSuccess = true,
                     url = "interceptor://synthetic"
                 )
@@ -76,6 +78,7 @@ class VaneSessionInterceptorTest {
                 statusCode = 200u,
                 headers = emptyMap(),
                 body = ByteArray(0),
+                bodyFilePath = null,
                 isSuccess = true,
                 url = "test://unused"
             )
@@ -92,6 +95,43 @@ class VaneSessionInterceptorTest {
     }
 
     @Test
+    fun interceptorsCanBeAddedAndClearedAfterSessionCreation() = runBlocking {
+        var capturedRequest: VaneRequest? = null
+        val session = VaneSession(
+            configuration = testConfig(),
+            transportExecutor = { request ->
+                capturedRequest = request
+                VaneResponse(
+                    statusCode = 204u,
+                    headers = emptyMap(),
+                    body = ByteArray(0),
+                    bodyFilePath = null,
+                    isSuccess = true,
+                    url = request.url
+                )
+            }
+        )
+
+        session
+            .addRequestInterceptor { request ->
+                request.copy(headers = request.headers + ("x-late" to "1"))
+            }
+            .addResponseInterceptor { response ->
+                response.copy(headers = response.headers + ("x-response" to "1"))
+            }
+
+        val response = session.get("https://example.com/late")
+
+        assertEquals("1", capturedRequest?.headers?.get("x-late"))
+        assertEquals("1", response.headers["x-response"])
+
+        session.clearInterceptors()
+        session.get("https://example.com/clear")
+
+        assertEquals(null, capturedRequest?.headers?.get("x-late"))
+    }
+
+    @Test
     fun requestBodyHelpersBuildTextAndFormRequests() = runBlocking {
         var capturedRequest: VaneRequest? = null
         val session = VaneSession(
@@ -102,6 +142,7 @@ class VaneSessionInterceptorTest {
                     statusCode = 204u,
                     headers = emptyMap(),
                     body = ByteArray(0),
+                    bodyFilePath = null,
                     isSuccess = true,
                     url = "test://synthetic"
                 )
@@ -124,11 +165,108 @@ class VaneSessionInterceptorTest {
     }
 
     @Test
+    fun requestFileHelpersPassNativePaths() = runBlocking {
+        var capturedRequest: VaneRequest? = null
+        val session = VaneSession(
+            configuration = testConfig(),
+            transportExecutor = { request ->
+                capturedRequest = request
+                VaneResponse(
+                    statusCode = 200u,
+                    headers = emptyMap(),
+                    body = ByteArray(0),
+                    bodyFilePath = request.responseBodyPath,
+                    isSuccess = true,
+                    url = request.url
+                )
+            }
+        )
+
+        session.uploadFile("https://example.com/upload", "/tmp/input.bin")
+
+        assertEquals("POST", capturedRequest?.method)
+        assertEquals("/tmp/input.bin", capturedRequest?.bodyFilePath)
+        assertEquals(null, capturedRequest?.body)
+
+        session.download("https://example.com/report", "/tmp/report.bin")
+
+        assertEquals("GET", capturedRequest?.method)
+        assertEquals("/tmp/report.bin", capturedRequest?.responseBodyPath)
+    }
+
+    @Test
+    fun multipartAndProgressHelpersDecorateRequests() = runBlocking {
+        VaneProgressBridge.create = { 42u }
+        VaneProgressBridge.snapshot = {
+            VaneProgressSnapshot(
+                uploadSent = 4u,
+                uploadTotal = 8u,
+                downloadReceived = 2u,
+                downloadTotal = 10u,
+                done = true
+            )
+        }
+        VaneProgressBridge.free = {}
+        var capturedRequest: VaneRequest? = null
+        var uploadProgress: Pair<ULong, ULong>? = null
+        var downloadProgress: Pair<ULong, ULong>? = null
+        val session = VaneSession(
+            configuration = testConfig(),
+            requestInterceptors = listOf { request ->
+                capturedRequest = request
+                request
+            },
+            transportExecutor = { request ->
+                capturedRequest = request
+                VaneResponse(
+                    statusCode = 200u,
+                    headers = emptyMap(),
+                    body = ByteArray(0),
+                    bodyFilePath = request.responseBodyPath,
+                    isSuccess = true,
+                    url = request.url
+                )
+            }
+        )
+
+        session.request("https://example.com/upload", HttpMethod.POST)
+            .multipart(
+                fields = mapOf("title" to "avatar"),
+                files = listOf(
+                    VaneMultipartFile(
+                        fieldName = "photo",
+                        bytes = byteArrayOf(1, 2, 3),
+                        fileName = "me.jpg",
+                        contentType = "image/jpeg"
+                    )
+                )
+            )
+            .downloadToFile("/tmp/result.json")
+            .onUploadProgress { sent, total -> uploadProgress = sent to total }
+            .onDownloadProgress { received, total -> downloadProgress = received to total }
+            .execute()
+
+        val contentType = capturedRequest?.headers?.get("Content-Type").orEmpty()
+        val body = String(capturedRequest?.body ?: ByteArray(0))
+
+        assertTrue(contentType.startsWith("multipart/form-data; boundary="))
+        assertTrue(body.contains("name=\"title\""))
+        assertTrue(body.contains("name=\"photo\"; filename=\"me.jpg\""))
+        assertTrue(body.contains("Content-Type: image/jpeg"))
+        assertEquals("/tmp/result.json", capturedRequest?.responseBodyPath)
+        assertTrue(capturedRequest?.progressId != null)
+        assertTrue(uploadProgress != null)
+        assertTrue(downloadProgress != null)
+        VaneProgressBridge.reset()
+    }
+
+    @Test
     fun responseValidationHelpersThrowOnUnexpectedStatus() {
         val response = VaneResponse(
             statusCode = 404u,
             headers = emptyMap(),
             body = "missing".toByteArray(),
+            bodyFilePath = null,
             isSuccess = false,
             url = "https://example.com/missing"
         )
