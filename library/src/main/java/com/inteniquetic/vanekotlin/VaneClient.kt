@@ -15,6 +15,20 @@ import kotlinx.serialization.json.Json
 
 // MARK: - Kotlin Extensions and Helpers
 
+// Shared, immutable Json instances — building one per call is pure overhead.
+// `internal` + @PublishedApi because the public inline `json()` reads it.
+@PublishedApi
+internal val vaneJson: Json = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+}
+
+private val vanePrettyJson: Json = Json {
+    prettyPrint = true
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+}
+
 object Vane {
     private var isLoaded = false
 
@@ -118,10 +132,7 @@ class VaneSession(
         createVaneClient(configuration)
     }
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json = vaneJson
 
     internal constructor(
         configuration: VaneClientConfig,
@@ -672,21 +683,12 @@ val VaneResponse.text: String
     get() = String(body)
 
 inline fun <reified T> VaneResponse.json(): T {
-    val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
-    return json.decodeFromString<T>(String(body))
+    return vaneJson.decodeFromString<T>(String(body))
 }
 
 val VaneResponse.prettyJson: String?
     get() = try {
-        val json = Json {
-            prettyPrint = true
-            ignoreUnknownKeys = true
-            encodeDefaults = true
-        }
-        json.encodeToString(Json.parseToJsonElement(String(body)))
+        vanePrettyJson.encodeToString(Json.parseToJsonElement(String(body)))
     } catch (e: Exception) {
         null
     }
