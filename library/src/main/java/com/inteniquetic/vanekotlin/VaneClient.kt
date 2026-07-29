@@ -1,5 +1,6 @@
 package com.inteniquetic.vanekotlin
 
+import android.content.Context
 import android.util.Log
 import java.net.URLEncoder
 import java.nio.charset.Charset
@@ -31,14 +32,50 @@ private val vanePrettyJson: Json = Json {
 
 object Vane {
     private var isLoaded = false
+    private var trustReady = false
 
-    fun initialize() {
-        if (isLoaded) return
-        try {
-            System.loadLibrary("vane")
-            isLoaded = true
+    /**
+     * Loads the native library. [VaneInitProvider] has normally already run
+     * [initialize] with a `Context` before any application code, so this is
+     * only kept for callers that already invoke it from `Application.onCreate`.
+     */
+    fun initialize() = initialize(null)
+
+    /**
+     * Loads the native library and, on the first call that supplies a
+     * [Context], gives the TCP transport the platform trust store it verifies
+     * certificates against.
+     *
+     * Only needed by hand if the merged manifest lost [VaneInitProvider] — the
+     * error raised by an uninitialized TCP request says so and names this call.
+     * HTTP/3 works without any of this.
+     */
+    @Synchronized
+    fun initialize(context: Context?) {
+        if (!isLoaded) {
+            try {
+                System.loadLibrary("vane")
+                isLoaded = true
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e("Vane", "FAIL: vane not found ❌", e)
+                return
+            }
+        }
+        if (trustReady || context == null) return
+        trustReady = try {
+            // applicationContext: the verifier keeps a global ref for the life
+            // of the process, so handing it an Activity would leak one.
+            VaneNative.initAndroid(context.applicationContext)
         } catch (e: UnsatisfiedLinkError) {
-            Log.e("Vane", "FAIL: vane not found ❌", e)
+            // Expected on a --no-default-features build, whose libvane.so has no
+            // TCP transport and so exports no initAndroid. Not retried either
+            // way; a TCP request on a build that *does* have one still reports
+            // the missing init itself, so this cannot mask a real failure.
+            Log.i("Vane", "libvane.so exports no initAndroid; assuming HTTP/3-only build", e)
+            true
+        }
+        if (!trustReady) {
+            Log.e("Vane", "Vane TCP transport unavailable: trust store init failed")
         }
     }
 }

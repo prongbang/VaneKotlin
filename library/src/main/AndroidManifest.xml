@@ -2,4 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <!--
+        Gives the TCP transport the Android trust store before any app code
+        runs. Without it every HTTP/2 and HTTP/1.1 request fails closed at
+        certificate verification. `${applicationId}` keeps the authority unique
+        so two apps embedding Vane can coexist on one device.
+        -->
+        <provider
+            android:name="com.inteniquetic.vanekotlin.VaneInitProvider"
+            android:authorities="${applicationId}.vaneinit"
+            android:exported="false"
+            android:initOrder="100" />
+    </application>
 </manifest>
