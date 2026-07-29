@@ -17,13 +17,55 @@ import org.junit.runner.RunWith
  * `org.rustls.platformverifier` classes stop being packaged, this test fails
  * where an HTTP/3 test would still pass.
  *
- * Deliberately not a Cloudflare-fronted host: those staple an OCSP response
- * that `rustls-platform-verifier` forwards to Android, which answers `Revoked`
- * for it. That is upstream behaviour in the verifier, unrelated to this
- * wiring, and would make the test assert the wrong thing.
+ * `example.com` still staples OCSP, so it exercises the stapled path. The
+ * no-staple path — certificates from CAs that retired OCSP, which Android
+ * reports as an undeterminable rather than revoked status — is covered by
+ * [TcpRevocationInstrumentedTest].
  */
 @RunWith(AndroidJUnit4::class)
 class TcpTrustStoreInstrumentedTest {
+
+    /**
+     * The HTTP/3 counterpart, guarding the other half of platform trust on
+     * Android: quiche/BoringSSL gets its anchors from `load_platform_roots`,
+     * which reads a CA directory rather than going through JNI. A directory
+     * that exists but yields no certificates would leave this with zero trust
+     * anchors, so this fails if that candidate list ever stops resolving.
+     */
+    @Test
+    fun http3RequestVerifiesAgainstPlatformCaDirectory() = runBlocking {
+        val config = VaneConfigurationBuilder().http3Only().timeout(30u).build()
+        val client = createVaneClient(config)
+
+        var last: Throwable? = null
+        repeat(3) {
+            runCatching { client.getRequest("https://cloudflare-quic.com/") }
+                .onSuccess { response ->
+                    assertEquals(200, response.statusCode.toInt())
+                    return@runBlocking
+                }
+                .onFailure { last = it }
+        }
+        throw AssertionError("HTTP/3 request never succeeded; last error: ${last?.message}")
+    }
+
+    /**
+     * The trust store must still refuse what it should. Deliberately paired
+     * with the accept cases above: a verifier wired up wrongly enough to
+     * accept everything would pass those and fail this.
+     */
+    @Test
+    fun selfSignedCertificateIsRejected() = runBlocking {
+        val config = VaneConfigurationBuilder().http1Only().timeout(30u).build()
+        val message = runCatching {
+            createVaneClient(config).getRequest("https://self-signed.badssl.com/")
+        }.exceptionOrNull()?.message
+        assertTrue(
+            "Expected an untrusted-certificate failure, got: ${message ?: "a successful response"}",
+            message?.contains("UnknownIssuer") == true ||
+                message?.contains("invalid peer certificate") == true
+        )
+    }
 
     @Test
     fun http1OnlyRequestVerifiesThroughPlatformTrustStore() = runBlocking {
