@@ -97,3 +97,14 @@ session.clearInterceptors()
 ```bash
 ./gradlew :library:testDebugUnitTest
 ```
+
+## Benchmark
+
+Cross-client × protocol latency matrix (vane vs Cronet vs OkHttp vs
+Retrofit2, each pinned per HTTP version) on an emulator:
+
+```bash
+VANE_TEST_BASE_URL=https://cloudflare-quic.com ./bench-android.sh
+```
+
+Methodology, caveats and measured results: [BENCHMARK.md](BENCHMARK.md).

@@ -2,8 +2,6 @@ package com.inteniquetic.vanekotlin
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.inteniquetic.vanekotlin.benchmark.BenchmarkRunner
-import com.inteniquetic.vanekotlin.benchmark.createRetrofitService
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -67,18 +65,7 @@ class ExampleInstrumentedTest {
         assertTrue(String(response.body).contains("page"))
     }
 
-    @Test
-    fun benchmark() = runBlocking {
-        val baseUrl = baseUrlOrSkip()
-        val config = VaneConfigurationBuilder()
-            .baseUrl(baseUrl)
-            .defaultHeaders(mapOf("Authorization" to "Bearer token"))
-            .http3Only()
-            .timeout(30u)
-            .build()
-        val vane = createVaneClient(config)
-        val retrofit = createRetrofitService(baseUrl)
-        BenchmarkRunner.benchmarkRetrofit(retrofit)
-        BenchmarkRunner.benchmarkVane(vane)
-    }
+    // The old unpinned Vane-vs-Retrofit benchmark that lived here was replaced
+    // by benchmark/ProtocolMatrixBenchmark, which pins every client to each
+    // protocol it can reach. Run it via VaneKotlin/bench-android.sh.
 }

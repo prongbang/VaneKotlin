@@ -1,0 +1,162 @@
+# VaneKotlin Android benchmark
+
+Client × protocol HTTP latency matrix on Android: **vane** (the shipped AAR +
+jniLibs), **Cronet** (embedded Chromium network stack — the only other HTTP/3
+speaker on Android), **OkHttp**, and **Retrofit2-over-OkHttp** (included to
+show what the wrapper costs over its own engine) — each pinned to every HTTP
+version it can reach, in one process, against one endpoint, sequentially, so
+every comparison is like-for-like at the same protocol.
+
+This is the Android sibling of `vane_benchmark/` (the Dart harness is the
+reference implementation); methodology and JSON schema match it exactly so the
+per-platform results merge into one chart.
+
+The harness lives in
+`library/src/androidTest/java/com/inteniquetic/vanekotlin/benchmark/ProtocolMatrixBenchmark.kt`.
+The competing clients are `androidTestImplementation` dependencies, which
+never reach the published AAR or its consumers — same rule as
+`vane_benchmark` on the Dart side: do not move them to `implementation`.
+
+## Run it
+
+```sh
+VANE_TEST_BASE_URL=https://cloudflare-quic.com VaneKotlin/bench-android.sh
+```
+
+That one command builds the androidTest APK, boots the first available AVD
+headless if no device is connected, installs, runs the matrix via
+`am instrument`, prints the grouped tables, and pulls the JSON metrics to
+`vane_benchmark/results/android-latest.json` (gitignored scratch; override
+with `VANE_BENCH_JSON`; a run worth keeping is copied to
+`results/<date>-<label>.json` by hand). Knobs, forwarded as instrumentation
+arguments under the same names as the Dart harness's env vars:
+`VANE_BENCH_ROUNDS` (3), `VANE_BENCH_REQUESTS` per round (10),
+`VANE_BENCH_WARMUP` (5). `ANDROID_HOME` defaults to
+`$HOME/Library/Android/sdk` if unset.
+
+The script uses `am instrument` rather than `connectedAndroidTest` because
+Gradle uninstalls the test APK when it finishes, taking the result files with
+it. Without `VANE_TEST_BASE_URL` the test is skipped (JUnit assumption), same
+as every live-gated test in this repo.
+
+## The matrix
+
+| client | HTTP/1.1 | HTTP/2 | HTTP/3 |
+|---|---|---|---|
+| vane | `HTTP1_ONLY` | `HTTP2_ONLY` (prior knowledge) | `HTTP3_ONLY` |
+| cronet | `enableHttp2(false)`, `enableQuic(false)` | `enableHttp2(true)`, `enableQuic(false)` | `enableQuic(true)` + QUIC hint |
+| okhttp | `protocols([HTTP_1_1])` | `protocols([HTTP_2, HTTP_1_1])` (ALPN) | — no QUIC transport |
+| retrofit2 | over okhttp, same pin | over okhttp, same pin | — rides OkHttp |
+
+Pinning semantics, honestly stated:
+
+- **vane h2** is HTTP/2 prior knowledge (same as reqwest's
+  `http2_prior_knowledge()`, which is also what the Dart harness's vane and
+  rhttp h2 pins do). **okhttp h2** cannot be pinned that hard over TLS — its
+  API requires `HTTP_1_1` in the list — so that cell is "h2 via ALPN, h1.1
+  permitted". **cronet h3** has no "only" switch anywhere in Cronet's API:
+  QUIC is enabled explicitly plus a `addQuicHint` for the host so it races
+  QUIC from the first request.
+- Because pins can be soft, **the proto column is read off every response**
+  (`VaneResponse.httpVersion`, `UrlResponseInfo.negotiatedProtocol`,
+  `Response.protocol`), never assumed. A row that negotiates something other
+  than its pin gets a NOTE line; a pinned cell that cannot reach its protocol
+  is an ERROR row, never a silent downgrade. Cells that cannot exist are
+  printed as `unsupported` — that vane and Cronet cover the h3 column and
+  OkHttp/Retrofit do not IS a result.
+
+## What it measures
+
+Identical to the Dart harness: per client, one **cold** request on a fresh
+client (reported alone), then warmup requests (discarded), then rounds ×
+requests **measured** sequential GETs of `<base>/`. `p50`/`p95` are
+nearest-rank over the pooled measured samples (same formula as
+`vane-rs/examples/bench.rs`). The visiting order rotates by one each round;
+DNS is resolved once before any client runs; status validation, byte
+materialization and timing are done identically for every client; every
+request has a 30 s guard; pooling/keep-alive is ON for every client (each
+one's default). Per-client failures become ERROR rows and do not kill the
+run. Each row owns its clients and connection pools — the retrofit rows use
+their own identically-pinned OkHttp clients, so their cold is a real
+handshake and their delta vs the okhttp rows is exactly the wrapper cost.
+
+Client-surface notes: vane and OkHttp are called on their blocking paths
+(`getRequest`, `Call.execute()`); Retrofit through a converter-less
+`Call<ResponseBody>.execute()`; Cronet has no synchronous mode, so its rows
+include the callback/executor handoff its API forces on every app.
+
+## Caveats — read before quoting numbers
+
+- **These are emulator numbers.** The emulator's network rides the host's
+  NAT/userspace stack (including UDP for QUIC). They are NOT device numbers
+  and are not comparable in absolute terms to the Dart host-VM numbers.
+  One machine, one network, sequential requests — RTT-dominated, not a lab.
+- **vane's TCP cold numbers include Android platform trust-store
+  initialization** (the rustls-platform-verifier JNI round-trip on first TLS
+  use), a once-per-process cost that lands in whichever TCP row runs first —
+  0.4–1.0 s on the emulator. The h3 row doesn't pay it (QUIC verifies against
+  the CA directory instead).
+- JSON emitted by Android's `org.json` escapes `/` in strings; it parses
+  identically to the Dart files.
+
+## Results (2026-08-11, API 35 arm64 emulator on an M-series host, cloudflare-quic.com)
+
+Full run kept at `vane_benchmark/results/2026-08-11-android-emulator-api35.json`.
+jniLibs measured were built from vane-rs HEAD (includes the `61033a5` drive-loop
+fix) with NDK 27.0.12077973.
+
+```
+== HTTP/1.1 ==
+client                    proto  cold_ms   p50_ms   p95_ms   min_ms   max_ms        n    bytes
+vane (h1)              HTTP/1.1   866.55    25.07    29.87    22.10    37.01       30   125961
+cronet (h1.1)          HTTP/1.1    55.70    24.13    28.43    21.88    34.91       30   125961
+okhttp (h1.1)          HTTP/1.1    67.32    23.51    28.23    21.20    33.22       30   125961
+retrofit2 (h1.1)       HTTP/1.1    53.14    25.84    29.93    22.80    34.28       30   125961
+
+== HTTP/2 ==
+vane (h2)                HTTP/2   494.33    25.46    29.29    22.20    29.57       30   125959
+cronet (h2)              HTTP/2    53.26    25.96    28.77    22.10    29.14       30   125959
+okhttp (h2)              HTTP/2    56.47    26.07    31.40    24.08    34.29       30   125959
+retrofit2 (h2)           HTTP/2    50.50    24.01    27.24    20.94    31.18       30   125959
+
+== HTTP/3 ==
+vane (h3)                HTTP/3    61.40    35.72    45.03    32.36    80.09       30   125959
+cronet (h3)              HTTP/3    48.67    25.84    31.45    23.01    38.11       30   125959
+okhttp                   unsupported: no HTTP/3/QUIC transport
+retrofit2 (okhttp)       unsupported: rides OkHttp, no HTTP/3/QUIC transport
+```
+
+### Stability across 3 back-to-back runs (p50/p95 ms)
+
+| client | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| vane (h1) | 25.1 / 29.9 | 24.4 / 35.9 | 22.7 / 31.4 |
+| vane (h2) | 25.5 / 29.3 | 24.2 / 30.4 | 21.6 / 26.4 |
+| vane (h3) | 35.7 / 45.0 | 35.2 / 38.6 | 28.8 / 76.6 |
+| cronet (h1.1) | 24.1 / 28.4 | 27.5 / 30.2 | 27.9 / 35.4 |
+| cronet (h2) | 26.0 / 28.8 | 26.2 / 30.2 | 25.8 / 35.1 |
+| cronet (h3) | 25.8 / 31.4 | 29.4 / 38.3 | 26.1 / 36.8 |
+| okhttp (h1.1) | 23.5 / 28.2 | 26.5 / 32.6 | 24.9 / 31.2 |
+| okhttp (h2) | 26.1 / 31.4 | 25.3 / 29.5 | 23.4 / 26.6 |
+| retrofit2 (h1.1) | 25.8 / 29.9 | 25.2 / 30.5 | 27.2 / 30.3 |
+| retrofit2 (h2) | 24.0 / 27.2 | 26.2 / 32.0 | 23.8 / 28.4 |
+
+Read of the three runs, stated plainly:
+
+- **HTTP/1.1 and HTTP/2: no stable ranking.** All four clients land within a
+  ~2–5 ms band and the order shuffles run to run — parity within emulator
+  noise. Vane placed first in 2 of 3 runs in both TCP groups, but the margins
+  are noise-level. Retrofit costs nothing measurable over its own OkHttp at
+  p50 — the wrapper is free at this request size.
+- **HTTP/3: Cronet beat Vane in all three runs** — the one stable ranking in
+  the matrix. p50 gap 2.7–9.9 ms, and Vane's h3 tail is worse every time
+  (p95 38.6–76.6 vs Cronet's 31.4–38.3; run 3 saw a 97.6 ms max). Cronet's
+  QUIC rides the same emulator NAT, so the emulator alone does not explain
+  the gap. On this emulator Vane's h3 is also the slowest of Vane's own three
+  pins — inverted from the Dart host-VM results, where h3 beat h1.
+- **Vane's TCP cold is heavy on Android**: 0.87–1.07 s (h1) and 0.40–0.56 s
+  (h2) across runs, vs 45–200 ms for everyone else — dominated by the
+  once-per-process platform trust-store init described above. Vane's h3 cold
+  (55–65 ms) is competitive.
+- Every measured row negotiated exactly its pinned protocol in every run
+  (`observed_protocol == pinned_protocol`, no NOTEs, n=30 everywhere).

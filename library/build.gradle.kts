@@ -45,10 +45,15 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.18.1@aar")
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
-    implementation("com.squareup.retrofit2:retrofit:3.0.0")
-    implementation("com.squareup.retrofit2:converter-gson:3.0.0")
     testImplementation(libs.junit)
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    // Benchmark contenders (see src/androidTest/.../benchmark/). androidTest
+    // dependencies never reach the published AAR or its consumers — keep the
+    // competing clients out of the shipping dependency graph, same rule as
+    // vane_benchmark on the Dart side.
+    androidTestImplementation("com.squareup.okhttp3:okhttp:4.12.0")
+    androidTestImplementation("com.squareup.retrofit2:retrofit:3.0.0")
+    androidTestImplementation("org.chromium.net:cronet-embedded:119.6045.31")
 }
