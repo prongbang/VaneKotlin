@@ -1847,6 +1847,26 @@ data class VaneResponse (
     var `isSuccess`: kotlin.Boolean
     , 
     var `url`: kotlin.String
+    , 
+    /**
+     * Raw `Set-Cookie` values from the final response, in wire order.
+     *
+     * Unfiltered: a cookie the jar refused (a `Domain` that is a public
+     * suffix, or an IP literal) still appears here, because this reports what
+     * the server sent. Never folded into `headers` — a `HashMap` cannot hold
+     * repeats and RFC 6265 forbids comma-joining `Set-Cookie` (an `Expires`
+     * value contains a comma, so the join is unsplittable).
+     *
+     * Redirects: the final response only. Intermediate hops still reach the
+     * cookie jar as before.
+     */
+    var `setCookie`: List<kotlin.String> = listOf() 
+    , 
+    /**
+     * Protocol that served the final response. `None` when no exchange
+     * completed, or when the transport could not say.
+     */
+    var `httpVersion`: VaneHttpVersion? = null 
     
 ){
     
@@ -1869,6 +1889,8 @@ public object FfiConverterTypeVaneResponse: FfiConverterRustBuffer<VaneResponse>
             FfiConverterOptionalString.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalTypeVaneHttpVersion.read(buf),
         )
     }
 
@@ -1878,7 +1900,9 @@ public object FfiConverterTypeVaneResponse: FfiConverterRustBuffer<VaneResponse>
             FfiConverterByteArray.allocationSize(value.`body`) +
             FfiConverterOptionalString.allocationSize(value.`bodyFilePath`) +
             FfiConverterBoolean.allocationSize(value.`isSuccess`) +
-            FfiConverterString.allocationSize(value.`url`)
+            FfiConverterString.allocationSize(value.`url`) +
+            FfiConverterSequenceString.allocationSize(value.`setCookie`) +
+            FfiConverterOptionalTypeVaneHttpVersion.allocationSize(value.`httpVersion`)
     )
 
     override fun write(value: VaneResponse, buf: ByteBuffer) {
@@ -1888,6 +1912,8 @@ public object FfiConverterTypeVaneResponse: FfiConverterRustBuffer<VaneResponse>
             FfiConverterOptionalString.write(value.`bodyFilePath`, buf)
             FfiConverterBoolean.write(value.`isSuccess`, buf)
             FfiConverterString.write(value.`url`, buf)
+            FfiConverterSequenceString.write(value.`setCookie`, buf)
+            FfiConverterOptionalTypeVaneHttpVersion.write(value.`httpVersion`, buf)
     }
 }
 
@@ -2161,6 +2187,46 @@ public object FfiConverterTypeVaneError : FfiConverterRustBuffer<VaneException> 
 
 
 
+/**
+ * Protocol a response was actually served over, as opposed to the
+ * [`VaneProtocolMode`] the request asked for.
+ */
+
+enum class VaneHttpVersion {
+    
+    HTTP10,
+    HTTP11,
+    HTTP2,
+    HTTP3;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeVaneHttpVersion: FfiConverterRustBuffer<VaneHttpVersion> {
+    override fun read(buf: ByteBuffer) = try {
+        VaneHttpVersion.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: VaneHttpVersion) = 4UL
+
+    override fun write(value: VaneHttpVersion, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 enum class VaneProtocolMode {
     
@@ -2301,6 +2367,38 @@ public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteA
         } else {
             buf.put(1)
             FfiConverterByteArray.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeVaneHttpVersion: FfiConverterRustBuffer<VaneHttpVersion?> {
+    override fun read(buf: ByteBuffer): VaneHttpVersion? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeVaneHttpVersion.read(buf)
+    }
+
+    override fun allocationSize(value: VaneHttpVersion?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeVaneHttpVersion.allocationSize(value)
+        }
+    }
+
+    override fun write(value: VaneHttpVersion?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeVaneHttpVersion.write(value, buf)
         }
     }
 }
