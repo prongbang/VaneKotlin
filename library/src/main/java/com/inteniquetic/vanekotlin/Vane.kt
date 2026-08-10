@@ -1859,6 +1859,14 @@ public object FfiConverterTypeVaneRequest: FfiConverterRustBuffer<VaneRequest> {
 data class VaneResponse (
     var `statusCode`: kotlin.UShort
     , 
+    /**
+     * One entry per header name, keyed lowercase. A name the server repeated
+     * carries its values comma-joined in wire order (`"a, b"`, RFC 9110
+     * §5.2) — identically on both transports. Two exceptions: `set-cookie`
+     * (see [`Self::set_cookie`]) and `location`, which is single-valued by
+     * RFC 9110 §10.2.2 and keeps its first occurrence — the one the redirect
+     * gate acts on — rather than joining into a non-URL.
+     */
     var `headers`: Map<kotlin.String, kotlin.String>
     , 
     var `body`: kotlin.ByteArray
