@@ -636,11 +636,17 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_vane_checksum_func_cancel_by_id(
+    ): Int
+    external fun uniffi_vane_checksum_func_create_cancel_token(
+    ): Int
     external fun uniffi_vane_checksum_func_create_default_config(
     ): Int
     external fun uniffi_vane_checksum_func_create_progress(
     ): Int
     external fun uniffi_vane_checksum_func_create_vane_client(
+    ): Int
+    external fun uniffi_vane_checksum_func_free_cancel_token(
     ): Int
     external fun uniffi_vane_checksum_func_free_progress(
     ): Int
@@ -706,12 +712,18 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_vane_fn_method_vaneclient_set_certificate_pins(`ptr`: Long,`host`: RustBuffer.ByValue,`pins`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_vane_fn_func_cancel_by_id(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_vane_fn_func_create_cancel_token(uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
     external fun uniffi_vane_fn_func_create_default_config(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_vane_fn_func_create_progress(uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_vane_fn_func_create_vane_client(`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_vane_fn_func_free_cancel_token(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_vane_fn_func_free_progress(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_vane_fn_func_progress_snapshot_by_id(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -837,6 +849,12 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_vane_checksum_func_cancel_by_id() != 63899) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_func_create_cancel_token() != 2029) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_vane_checksum_func_create_default_config() != 54371) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -844,6 +862,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_func_create_vane_client() != 57471) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_func_free_cancel_token() != 20515) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_func_free_progress() != 42043) {
@@ -2507,7 +2528,26 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
             FfiConverterSequenceString.write(v, buf)
         }
     }
-} fun `createDefaultConfig`(): VaneClientConfig {
+} fun `cancelById`(`id`: kotlin.ULong)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_vane_fn_func_cancel_by_id(
+    
+        FfiConverterULong.lower(`id`),_status)
+}
+    
+    
+ fun `createCancelToken`(): kotlin.ULong {
+            return FfiConverterULong.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_vane_fn_func_create_cancel_token(
+    
+        _status)
+}
+    )
+    }
+    
+ fun `createDefaultConfig`(): VaneClientConfig {
             return FfiConverterTypeVaneClientConfig.lift(
     uniffiRustCall() { _status ->
     UniffiLib.uniffi_vane_fn_func_create_default_config(
@@ -2537,6 +2577,15 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 }
     )
     }
+    
+ fun `freeCancelToken`(`id`: kotlin.ULong)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_vane_fn_func_free_cancel_token(
+    
+        FfiConverterULong.lower(`id`),_status)
+}
+    
     
  fun `freeProgress`(`id`: kotlin.ULong)
         = 

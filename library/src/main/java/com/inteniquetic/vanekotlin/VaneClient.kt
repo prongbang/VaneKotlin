@@ -154,6 +154,49 @@ internal object VaneProgressBridge {
     }
 }
 
+internal object VaneCancelTokenBridge {
+    var create: () -> ULong = { createCancelToken() }
+    var cancel: (ULong) -> Unit = { id -> cancelById(id) }
+    var free: (ULong) -> Unit = { id -> freeCancelToken(id) }
+
+    fun reset() {
+        create = { createCancelToken() }
+        cancel = { id -> cancelById(id) }
+        free = { id -> freeCancelToken(id) }
+    }
+}
+
+/**
+ * Cancels an in-flight request from any thread.
+ *
+ * The native token is created eagerly at construction — unlike Dart, whose
+ * token reaches the core over an async platform channel and therefore latches
+ * a cancel issued before registration — so [cancel] always reaches the core
+ * immediately.
+ *
+ * Attach it with [VaneRequestBuilder.cancelToken], or set [id] as
+ * `VaneRequest.cancelTokenId` when building requests by hand. A cancelled
+ * token stays cancelled, so reuse on a second request aborts that one too.
+ * Call [close] (or use `use { }`) when done; the core never reuses ids, so
+ * double-close and cancel-after-close are safe no-ops.
+ */
+class VaneCancelToken : AutoCloseable {
+    val id: ULong = VaneCancelTokenBridge.create()
+
+    @Volatile
+    var isCancelled: Boolean = false
+        private set
+
+    fun cancel() {
+        isCancelled = true
+        VaneCancelTokenBridge.cancel(id)
+    }
+
+    override fun close() {
+        VaneCancelTokenBridge.free(id)
+    }
+}
+
 class VaneSession(
     private val configuration: VaneClientConfig = createDefaultConfig(),
     requestInterceptors: List<VaneRequestInterceptor> = emptyList(),
@@ -333,6 +376,7 @@ class VaneRequestBuilder internal constructor(
     private var responseBodyPath: String? = null
     private var uploadProgress: VaneProgressCallback? = null
     private var downloadProgress: VaneProgressCallback? = null
+    private var cancelTokenId: ULong? = null
     private var timeoutSeconds: ULong? = null
     private var followRedirects = true
 
@@ -382,6 +426,11 @@ class VaneRequestBuilder internal constructor(
 
     fun onDownloadProgress(callback: VaneProgressCallback): VaneRequestBuilder {
         downloadProgress = callback
+        return this
+    }
+
+    fun cancelToken(token: VaneCancelToken): VaneRequestBuilder {
+        cancelTokenId = token.id
         return this
     }
 
@@ -493,7 +542,7 @@ class VaneRequestBuilder internal constructor(
             body = body,
             bodyFilePath = bodyFilePath,
             responseBodyPath = responseBodyPath,
-            cancelTokenId = null,
+            cancelTokenId = cancelTokenId,
             progressId = progressId,
             timeoutSeconds = timeoutSeconds,
             followRedirects = followRedirects
