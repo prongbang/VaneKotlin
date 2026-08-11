@@ -157,6 +157,51 @@ Read of the three runs, stated plainly:
 - **Vane's TCP cold is heavy on Android**: 0.87–1.07 s (h1) and 0.40–0.56 s
   (h2) across runs, vs 45–200 ms for everyone else — dominated by the
   once-per-process platform trust-store init described above. Vane's h3 cold
-  (55–65 ms) is competitive.
+  (55–65 ms) is competitive. `warmup()` exists to move this cost off the
+  first request — measured below.
 - Every measured row negotiated exactly its pinned protocol in every run
   (`observed_protocol == pinned_protocol`, no NOTEs, n=30 everywhere).
+
+## warmup(): the cold start, moved off the first request (2026-08-12)
+
+`VaneClient.warmup(url)` pays the lazy setup at a moment the app chooses —
+client construction (tokio runtime, TLS config, platform verifier), one TLS
+handshake to the target whose NewSessionTickets are kept so the first real
+connection can *resume* (a resumed handshake carries no certificate, which is
+what skips Android's per-verification JNI cost), and on HTTP/3 a pre-connected
+pooled QUIC connection. Best-effort by contract: it never throws, and an
+`Http3Only` client never touches TCP machinery.
+
+Measured by `benchmark/WarmupBenchmark` via `VaneKotlin/bench-warmup.sh`
+(same emulator class and endpoint as the matrix above; each sample is a fresh
+app process because the trust-store init is process-global — the matrix's
+`cold` column keeps its meaning, this table adds the warmed variant beside
+it). Three runs each, 2026-08-12, API 35 arm64 emulator, cloudflare-quic.com:
+
+```
+                         run1     run2     run3
+tcp (h2) cold          761.64   775.64  1239.18   first request, no warmup
+tcp (h2) after warmup    54.15    98.98    99.86   first request; warmup itself 833-837 (background)
+h3 cold                  44.20    48.37    48.45   first request, no warmup
+h3 after warmup          36.55    40.98    45.31   first request; warmup itself 13-24
+```
+
+Read: the unwarmed TCP cold is unchanged (0.76–1.24 s here, the matrix band),
+and the first request after a background `warmup()` lands at 54–100 ms — the
+same class as Cronet/OkHttp/Retrofit cold (45–200 ms). h3 cold is unaffected,
+and warmed h3 rides the pre-connected pooled connection.
+
+Two caveats, stated plainly:
+
+- Resumption is the server's call. If it declines the ticket, the first
+  request runs a full handshake and pays the per-verification cost again —
+  observed once in an earlier 3-run set as a ~406 ms sample. Still ~2–3x
+  better than no warmup, but not the 54–100 ms headline.
+- The deeper number underneath: on this emulator **every full TLS
+  verification through the platform verifier costs ~350–400 ms**, per
+  handshake, not once — the verifier re-runs PKIX building and the
+  revocation check per call (visible in the matrix as vane (h2)'s 494 ms
+  cold in a process where vane (h1) had already run for minutes). warmup
+  sidesteps it via resumption; fixing it at the source is a
+  rustls-platform-verifier caching issue, adjacent to the #221 patch this
+  repo already carries.

@@ -128,6 +128,23 @@ suspend fun VaneClient.executeAsync(request: VaneRequest): VaneResponse {
     }
 }
 
+/**
+ * Best-effort warm-up of the client's one-time setup and connection cost, so
+ * the first real request doesn't pay it — on Android the TCP transport's
+ * first request otherwise carries ~1 s of trust-store and runtime setup.
+ * Call it once, early (e.g. from `Application.onCreate` scope); it never
+ * throws, and repeat calls are cheap.
+ *
+ * [url] picks the origin to pre-connect (HTTP/3) or probe (TCP); when null,
+ * the client's `baseUrl` is used. With neither, only construction is warmed.
+ * See the core `warmup` docs for the per-protocol-mode details.
+ */
+suspend fun VaneClient.warmupAsync(url: String? = null) {
+    withContext(Dispatchers.IO) {
+        warmup(url)
+    }
+}
+
 // MARK: - Retrofit-style Interface
 
 typealias VaneRequestInterceptor = suspend (VaneRequest) -> VaneRequest
@@ -265,6 +282,16 @@ class VaneSession(
     fun clearCertificatePins(host: String): VaneSession {
         client.clearCertificatePins(host)
         return this
+    }
+
+    /**
+     * Best-effort warm-up of the underlying client; see
+     * [VaneClient.warmupAsync]. Creates the native client if this session has
+     * not made a request yet — that construction is part of what gets warmed.
+     * Never throws.
+     */
+    suspend fun warmup(url: String? = null) {
+        client.warmupAsync(url)
     }
 
     // MARK: - Direct Methods

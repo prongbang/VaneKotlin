@@ -672,6 +672,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_vane_checksum_method_vaneclient_set_certificate_pins(
     ): Int
+    external fun uniffi_vane_checksum_method_vaneclient_warmup(
+    ): Int
     external fun ffi_vane_uniffi_contract_version(
     ): Int
 
@@ -711,6 +713,8 @@ internal object UniffiLib {
     external fun uniffi_vane_fn_method_vaneclient_put_request(`ptr`: Long,`url`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_vane_fn_method_vaneclient_set_certificate_pins(`ptr`: Long,`host`: RustBuffer.ByValue,`pins`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_vane_fn_method_vaneclient_warmup(`ptr`: Long,`url`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_vane_fn_func_cancel_by_id(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -901,6 +905,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_method_vaneclient_set_certificate_pins() != 37780) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_method_vaneclient_warmup() != 42407) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1325,6 +1332,33 @@ public interface VaneClientInterface {
     
     fun `setCertificatePins`(`host`: kotlin.String, `pins`: List<kotlin.String>)
     
+    /**
+     * Pays the client's one-time setup and connection cost up front — call it
+     * once at app startup, from a background thread (it blocks, exactly like
+     * `execute_request`), so the first real request doesn't pay it.
+     *
+     * What gets warmed follows the configured protocol mode:
+     * - HTTP/3-capable modes establish one pooled QUIC+TLS connection to
+     * `url` (or `base_url` when `url` is empty). No HTTP request is sent.
+     * - TCP-capable modes build and cache the TCP client (tokio runtime, TLS
+     * config, platform trust verifier) and run one TLS handshake to the
+     * target — on Android that first verification loads the system trust
+     * store and is the bulk of the measured ~1 s first-request cost. Again
+     * no HTTP request: the server sees a handshake and a clean close.
+     * - `Http3Only` never touches TCP machinery, so it stays as light as it
+     * is today.
+     *
+     * With neither `url` nor `base_url` there is nothing to connect to;
+     * TCP-capable modes still do the construction, which is most of the win.
+     *
+     * Best effort by contract: failures are swallowed. Every error it could
+     * raise is either transient (no network yet — exactly the startup
+     * condition this exists for) or will be reported, with a better message,
+     * by the first real request. Idempotent and cheap on repeat calls; safe
+     * to call concurrently with requests from any thread.
+     */
+    fun `warmup`(`url`: kotlin.String?)
+    
     companion object
 }
 
@@ -1542,6 +1576,43 @@ open class VaneClient: Disposable, AutoCloseable, VaneClientInterface
     UniffiLib.uniffi_vane_fn_method_vaneclient_set_certificate_pins(
         it,
         FfiConverterString.lower(`host`),FfiConverterSequenceString.lower(`pins`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Pays the client's one-time setup and connection cost up front — call it
+     * once at app startup, from a background thread (it blocks, exactly like
+     * `execute_request`), so the first real request doesn't pay it.
+     *
+     * What gets warmed follows the configured protocol mode:
+     * - HTTP/3-capable modes establish one pooled QUIC+TLS connection to
+     * `url` (or `base_url` when `url` is empty). No HTTP request is sent.
+     * - TCP-capable modes build and cache the TCP client (tokio runtime, TLS
+     * config, platform trust verifier) and run one TLS handshake to the
+     * target — on Android that first verification loads the system trust
+     * store and is the bulk of the measured ~1 s first-request cost. Again
+     * no HTTP request: the server sees a handshake and a clean close.
+     * - `Http3Only` never touches TCP machinery, so it stays as light as it
+     * is today.
+     *
+     * With neither `url` nor `base_url` there is nothing to connect to;
+     * TCP-capable modes still do the construction, which is most of the win.
+     *
+     * Best effort by contract: failures are swallowed. Every error it could
+     * raise is either transient (no network yet — exactly the startup
+     * condition this exists for) or will be reported, with a better message,
+     * by the first real request. Idempotent and cheap on repeat calls; safe
+     * to call concurrently with requests from any thread.
+     */override fun `warmup`(`url`: kotlin.String?)
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_vane_fn_method_vaneclient_warmup(
+        it,
+        FfiConverterOptionalString.lower(`url`),_status)
 }
     }
     
