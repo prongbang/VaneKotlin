@@ -154,6 +154,8 @@ Read of the three runs, stated plainly:
   QUIC rides the same emulator NAT, so the emulator alone does not explain
   the gap. On this emulator Vane's h3 is also the slowest of Vane's own three
   pins — inverted from the Dart host-VM results, where h3 beat h1.
+  **Diagnosed and fixed 2026-08-12 — see "The h3 gap to Cronet: a socket
+  buffer" below.**
 - **Vane's TCP cold is heavy on Android**: 0.87–1.07 s (h1) and 0.40–0.56 s
   (h2) across runs, vs 45–200 ms for everyone else — dominated by the
   once-per-process platform trust-store init described above. Vane's h3 cold
@@ -205,3 +207,71 @@ Two caveats, stated plainly:
   sidesteps it via resumption; fixing it at the source is a
   rustls-platform-verifier caching issue, adjacent to the #221 patch this
   repo already carries.
+
+## The h3 gap to Cronet: a socket buffer (2026-08-12)
+
+The one stable ranking in the matrix above — Cronet beating Vane at HTTP/3
+in all three runs, with Vane carrying a 76–98 ms tail — was a kernel socket
+buffer, not a protocol or stack difference.
+
+Per-request attribution split every request at the response-HEADERS event.
+TTFB was at parity or better (Vane 23.3 ms p50 vs Cronet 30.4 in the same
+window); the entire gap sat in body transfer (p50 8.5 vs 3.3 ms, p95 55 vs
+6 ms) — 3 of 30 requests stalled ~50 ms mid-body, each receiving one or two
+extra packets, the signature of a loss recovered by timeout rather than
+fast retransmit. The kernel then named the mechanism outright: `Udp:
+RcvbufErrors` in `/proc/net/snmp` grew by exactly one drop per request
+under Vane's traffic (+36 across 36 requests) and by zero under Cronet's.
+Pooling reuse itself was clean — 1 handshake per run, 35/36 requests on the
+pooled connection.
+
+Why it drops: a pooled connection keeps the server's congestion window hot,
+so each 126 KB response arrives as a single ~111-packet burst — and the
+emulator's userspace NAT delivers that burst into the guest all at once,
+where a real network would pace it across the path RTT. At ~2 KB of kernel
+skb accounting per 1350-byte datagram, the burst costs ~256 KB against the
+emulator's 224 KB default receive buffer (`rmem_default`), so the tail of
+the flight is dropped at the socket. A tail-of-flight drop leaves no later
+packet to reveal the gap, so recovery waits out the server's probe timeout
+— tens of milliseconds — which is exactly the 76–98 ms max column above.
+Cronet is immune because Chromium requests a 1 MB receive buffer on its
+QUIC sockets (and drains with recvmmsg + UDP GRO).
+
+The fix, in vane-rs: request a 1 MB `SO_RCVBUF` (Chromium's number) on
+every QUIC UDP socket, best-effort; the kernel clamps to `rmem_max`
+(256 KB → 512 KB effective on this emulator) and the buffer is a limit,
+not an allocation, so idle pooled connections cost nothing. Measured
+after: **zero RcvbufErrors across ~216 Vane h3 requests** in six
+instrumented-and-matrix runs, and body-transfer p95 fell 55 → 8–17 ms.
+
+Post-fix matrix, same emulator class and endpoint, four runs (p50/p95 ms);
+run 4 measured the final shipped jniLibs; run 2 (the both-clients-clean run)
+is kept at
+`vane_benchmark/results/2026-08-12-android-emulator-api35-rcvbuf-fix.json`:
+
+| run | vane (h3) | cronet (h3) |
+|---|---|---|
+| 1 | 25.49 / 32.07 | 50.17 / 167.80 |
+| 2 | 25.14 / 29.66 | 26.17 / 32.47 |
+| 3 | 38.08 / 77.64 | 27.92 / 34.03 |
+| 4 | 25.84 / 31.21 | 34.02 / 49.84 |
+
+No stable ranking survives. Vane's three clean runs sit at p50 25.1–25.8
+(pre-fix: 28.8–35.7 with Cronet ahead in every run); runs 1/3/4 each show
+one client catching a several-minute endpoint-weather window; instrumented
+runs place those windows in TTFB (path RTT / server time, hitting both
+clients alike — Cronet's own TTFB p50 swung 21.9 → 40.5 ms between runs
+half an hour apart) with body transfer staying clean, and `RcvbufErrors`
+stayed flat through all of them. The h3 group now behaves like the TCP groups: parity
+within emulator noise. Residual and accepted: ~3 ms of body-side p50 vs
+Cronet on this emulator, from one recv syscall per datagram vs Cronet's
+batched drain — the upgrade path (recvmmsg/GRO) is noted in the core on
+`read_quic_packets`.
+
+Host macOS A/B of the same change (cloudflare-quic.com, 3 runs each side,
+`examples/bench` warm pool=on): p50 23.6/30.3/23.8 → 21.5/20.7/36.2, body
+p50 2.9–3.6 → 3.1–5.1 — unchanged within endpoint weather (the 36.2 run's
+TTFB was elevated by the same amount). The host never dropped a packet in
+any run: real-network pacing spreads the burst, and macOS's default socket
+buffer (786 KB) absorbs what remains, which is why this only ever showed
+up on Android.
