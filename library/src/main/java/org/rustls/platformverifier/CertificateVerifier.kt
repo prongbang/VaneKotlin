@@ -18,6 +18,12 @@
 //      block below, and rustls/rustls-platform-verifier#221.
 //   2. `BuildConfig` is supplied by VendoredBuildConfig.kt, since the
 //      generated one belongs to this module's own namespace.
+//   3. The system keystore's trust anchors are extracted once per process and
+//      reused for the revocation `PKIXBuilderParameters`, instead of letting
+//      its `KeyStore` constructor re-enumerate and re-parse the whole platform
+//      store on every verification (measured at 290-310 ms per TLS handshake
+//      on an API 35 emulator). Trust inputs only — no verification verdict is
+//      cached. See `systemTrustAnchors` below.
 //
 // Keep this file otherwise byte-identical to upstream so it stays easy to
 // re-sync. The JNI contract it satisfies — class name, the @JvmStatic
@@ -45,6 +51,7 @@ import java.security.cert.CertificateNotYetValidException
 import java.security.cert.CertificateParsingException
 import java.security.cert.PKIXBuilderParameters
 import java.security.cert.PKIXRevocationChecker
+import java.security.cert.TrustAnchor
 import java.security.cert.X509Certificate
 import java.util.Date
 import java.util.EnumSet
@@ -203,6 +210,42 @@ internal object CertificateVerifier {
     private val systemTrustManager: Lazy<X509TrustManagerExtensions?> =
         makeLazyTrustManager(systemKeystore)
 
+    // Local modification (3): the system keystore's trust anchors, extracted
+    // once per process.
+    //
+    // `PKIXBuilderParameters(KeyStore, CertSelector)` re-enumerates the
+    // keystore and re-parses every root certificate it contains on each
+    // construction — on Android's `AndroidCAStore` that walks the whole
+    // on-disk platform store per TLS handshake. The anchor set does not
+    // depend on the chain being verified, and this verifier already fixes
+    // its trust view for the process lifetime (`systemTrustManager` and
+    // `systemTrustAnchorCache` both outlive any runtime change to the
+    // platform store), so the anchors are extracted once and reused. A chain
+    // rooted in a CA added after process start is refused by
+    // `checkServerTrusted` before these parameters are ever consulted, so the
+    // cache cannot widen trust. Only trust *inputs* are cached — expiry, path
+    // building and revocation still run on every verification.
+    //
+    // The extraction mirrors what `PKIXParameters(KeyStore)` does internally;
+    // `TrustAnchor` and the certificates it holds are immutable, so sharing
+    // one set across verifications is safe. The mock keystore is deliberately
+    // not cached: tests mutate it between verifications.
+    @get:Synchronized
+    private val systemTrustAnchors: Lazy<Set<TrustAnchor>> = lazy {
+        val anchors = hashSetOf<TrustAnchor>()
+        systemKeystore?.let { keystore ->
+            for (alias in keystore.aliases()) {
+                if (keystore.isCertificateEntry(alias)) {
+                    val cert = keystore.getCertificate(alias)
+                    if (cert is X509Certificate) {
+                        anchors.add(TrustAnchor(cert, null))
+                    }
+                }
+            }
+        }
+        anchors
+    }
+
     @JvmStatic
     private fun verifyCertificateChain(
         @Suppress("UNUSED_PARAMETER") context: Context,
@@ -348,7 +391,21 @@ internal object CertificateVerifier {
                 return VerificationResult(StatusCode.Ok)
             }
 
-            val parameters = PKIXBuilderParameters(keystore, null)
+            // Local modification (3): reuse the pre-extracted system anchors
+            // instead of re-walking the keystore per verification. Any
+            // degenerate case (mock keystore, null or empty system store)
+            // falls back to the upstream constructor so behavior — including
+            // its exceptions — is unchanged.
+            val parameters = if (keystore != null && keystore === systemKeystore) {
+                val anchors = systemTrustAnchors.value
+                if (anchors.isNotEmpty()) {
+                    PKIXBuilderParameters(anchors, null)
+                } else {
+                    PKIXBuilderParameters(keystore, null)
+                }
+            } else {
+                PKIXBuilderParameters(keystore, null)
+            }
 
             val validator = CertPathValidator.getInstance("PKIX")
             val revocationChecker = validator.revocationChecker as PKIXRevocationChecker
