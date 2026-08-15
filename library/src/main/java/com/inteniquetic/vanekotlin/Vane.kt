@@ -638,6 +638,8 @@ internal object IntegrityCheckingUniffiLib {
     }
     external fun uniffi_vane_checksum_func_cancel_by_id(
     ): Int
+    external fun uniffi_vane_checksum_func_create_body_stream(
+    ): Int
     external fun uniffi_vane_checksum_func_create_cancel_token(
     ): Int
     external fun uniffi_vane_checksum_func_create_default_config(
@@ -646,6 +648,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_vane_checksum_func_create_vane_client(
     ): Int
+    external fun uniffi_vane_checksum_func_finish_body_stream(
+    ): Int
+    external fun uniffi_vane_checksum_func_free_body_stream(
+    ): Int
     external fun uniffi_vane_checksum_func_free_cancel_token(
     ): Int
     external fun uniffi_vane_checksum_func_free_progress(
@@ -653,6 +659,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_vane_checksum_func_progress_snapshot_by_id(
     ): Int
     external fun uniffi_vane_checksum_func_response_body_utf8(
+    ): Int
+    external fun uniffi_vane_checksum_func_write_body_stream_chunk(
     ): Int
     external fun uniffi_vane_checksum_method_vaneclient_add_certificate_pin(
     ): Int
@@ -738,6 +746,8 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_vane_fn_func_cancel_by_id(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_vane_fn_func_create_body_stream(`contentLength`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
     external fun uniffi_vane_fn_func_create_cancel_token(uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_vane_fn_func_create_default_config(uniffi_out_err: UniffiRustCallStatus, 
@@ -746,6 +756,10 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_vane_fn_func_create_vane_client(`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_vane_fn_func_finish_body_stream(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_vane_fn_func_free_body_stream(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_vane_fn_func_free_cancel_token(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_vane_fn_func_free_progress(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -754,6 +768,8 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_vane_fn_func_response_body_utf8(`resp`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_vane_fn_func_write_body_stream_chunk(`id`: Long,`chunk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun ffi_vane_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun ffi_vane_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -876,6 +892,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_vane_checksum_func_cancel_by_id() != 63899) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_vane_checksum_func_create_body_stream() != 37766) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_vane_checksum_func_create_cancel_token() != 2029) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -888,6 +907,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_vane_checksum_func_create_vane_client() != 57471) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_vane_checksum_func_finish_body_stream() != 6990) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_func_free_body_stream() != 41564) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_vane_checksum_func_free_cancel_token() != 20515) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -898,6 +923,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_func_response_body_utf8() != 21709) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_func_write_body_stream_chunk() != 63692) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_method_vaneclient_add_certificate_pin() != 4284) {
@@ -3032,6 +3060,22 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 }
     
     
+
+        /**
+         * Creates a caller-pushed request body stream and returns its id, to be set
+         * as [`VaneRequest::body_stream_id`]. `content_length` of `Some(n)` sends
+         * `content-length: n` and enforces exactly `n` bytes; `None` sends no length
+         * (chunked on HTTP/1.1). One stream feeds exactly one request.
+         */ fun `createBodyStream`(`contentLength`: kotlin.ULong?): kotlin.ULong {
+            return FfiConverterULong.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_vane_fn_func_create_body_stream(
+    
+        FfiConverterOptionalULong.lower(`contentLength`),_status)
+}
+    )
+    }
+    
  fun `createCancelToken`(): kotlin.ULong {
             return FfiConverterULong.lift(
     uniffiRustCall() { _status ->
@@ -3073,6 +3117,35 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     )
     }
     
+
+        /**
+         * Marks the body complete. With a declared length, finishing at any other
+         * byte count is an `InvalidRequest` that also fails the in-flight request.
+         */
+    @Throws(VaneException::class) fun `finishBodyStream`(`id`: kotlin.ULong)
+        = 
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.uniffi_vane_fn_func_finish_body_stream(
+    
+        FfiConverterULong.lower(`id`),_status)
+}
+    
+    
+
+        /**
+         * Frees the id; aborts the request if the stream was not finished (and
+         * releases a writer parked inside [`write_body_stream_chunk`] — this is the
+         * abort path a wrapper must reach from somewhere that is not itself
+         * parked). Safe on unknown or already-freed ids.
+         */ fun `freeBodyStream`(`id`: kotlin.ULong)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_vane_fn_func_free_body_stream(
+    
+        FfiConverterULong.lower(`id`),_status)
+}
+    
+    
  fun `freeCancelToken`(`id`: kotlin.ULong)
         = 
     uniffiRustCall() { _status ->
@@ -3111,6 +3184,25 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 }
     )
     }
+    
+
+        /**
+         * Appends one chunk. Blocks while the transport's send window and the
+         * stream's internal buffer are full — this blocking is the backpressure, so
+         * bindings run it off any thread that must stay responsive and interrupt a
+         * parked call with [`free_body_stream`] (or the request's cancel token),
+         * never by waiting it out. Fails once the stream or its request is dead;
+         * the error is the same one the request fails with, so either side of the
+         * caller learns the outcome.
+         */
+    @Throws(VaneException::class) fun `writeBodyStreamChunk`(`id`: kotlin.ULong, `chunk`: kotlin.ByteArray)
+        = 
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.uniffi_vane_fn_func_write_body_stream_chunk(
+    
+        FfiConverterULong.lower(`id`),FfiConverterByteArray.lower(`chunk`),_status)
+}
+    
     
 
 

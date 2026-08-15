@@ -304,6 +304,162 @@ private suspend fun readChunkCancellably(
     }
 }
 
+// MARK: - Upload (request-body) streaming
+
+/**
+ * Like [executeAsync], but the request body is streamed from [body] instead
+ * of being held in memory: chunks are pushed into the core one blocking
+ * write at a time, and when the transport's send window and the core's
+ * 256 KiB buffer are full that write parks — so [body]'s emission is what
+ * stalls, and Kotlin-side buffering is bounded at the single chunk in
+ * flight. Chunk boundaries carry no meaning.
+ *
+ * [contentLength] of a non-null `n` sends `Content-Length: n` and enforces
+ * exactly `n` bytes (finishing at any other count fails the request); null
+ * streams without a declared length (chunked on HTTP/1.1, plain frames on
+ * h2/HTTP/3).
+ *
+ * A streamed body is one-shot, which buys these documented differences from
+ * [executeAsync]:
+ * - **No retry.** The request runs exactly one attempt per transport,
+ *   whatever the retry configuration says.
+ * - **Body-keeping redirects are refused** (307/308 on any method, 301/302
+ *   on GET): the 3xx comes back as the response, carrying
+ *   `vane-redirect-refused: streamed-body`. Hops that drop the body (303,
+ *   301/302 on other methods) are followed as a bodyless GET.
+ * - **HTTP/3-to-TCP fallback happens only before the first consumed body
+ *   byte** — after that the HTTP/3 error is reported instead.
+ * - **The whole upload must fit the request timeout.** On TCP the body send
+ *   and the response headers share one deadline (reqwest wraps both in a
+ *   single timeout), and HTTP/3 runs the same shared deadline — callers
+ *   moving large bodies set [VaneRequestBuilder.timeout] accordingly.
+ *
+ * A failure of [body] itself aborts the request and is rethrown here in
+ * place of the `Cancelled` that abort induces. A write the core fails is
+ * not double-reported: the exception thrown by this call is authoritative.
+ * Cancelling the calling coroutine frees the native stream from a
+ * never-parked path (releasing a parked write) and thereby aborts the
+ * request at its next body pull; attach a [VaneCancelToken] as well for a
+ * prompt abort in every request phase. One stream feeds exactly one
+ * request; each call creates its own.
+ */
+suspend fun VaneClient.executeAsync(
+    request: VaneRequest,
+    body: Flow<ByteArray>,
+    contentLength: ULong? = null,
+): VaneResponse = withStreamedBody(body, contentLength) { id ->
+    executeAsync(request.copy(bodyStreamId = id))
+}
+
+/**
+ * Bridges one caller-supplied body flow into a native body stream around
+ * [execute] — [streamingBodyFlow]'s mirror image, with `free` in the role
+ * the cancel token plays there. The shape carries the invariants; refactor
+ * with care:
+ *
+ * - **No write-ahead, by construction.** There is no channel and no
+ *   producer buffer: the writer collects [source] and makes one
+ *   [blockingBodyStreamCall] per element, so a chunk is not asked for (a
+ *   cold flow's `emit` does not resume) until the previous chunk's blocking
+ *   write has returned — and past the core's 256 KiB buffer that write only
+ *   returns as the transport drains, which stalls the source through
+ *   QUIC/TCP flow control. Re-introducing a `buffer`/`channelFlow` stage
+ *   looks equivalent and is not: it adds run-ahead the size of its buffer.
+ * - **Free from a never-parked path.** A writer parked inside the blocking
+ *   write is released only by [VaneBodyStreamBridge.free] (or the core's
+ *   own request-release latch); anything that waits for the parked write
+ *   before freeing deadlocks. [blockingBodyStreamCall] fires the free the
+ *   moment its caller is cancelled, and the writer's `finally` — which
+ *   cannot run while its own call is still parked — frees on every other
+ *   terminal. After a clean finish that free only drops the id (queued
+ *   bytes still drain), so it is unconditional.
+ * - **The execute result is authoritative.** A write the core fails carries
+ *   the same error the request fails with, so the writer stops quietly
+ *   instead of re-reporting it; only a failure of [source] itself is
+ *   recorded, and it replaces the `Cancelled` its abort induces.
+ */
+internal suspend fun <T> withStreamedBody(
+    source: Flow<ByteArray>,
+    contentLength: ULong?,
+    execute: suspend (bodyStreamId: ULong) -> T,
+): T {
+    val id = VaneBodyStreamBridge.create(contentLength)
+    var sourceFailure: Throwable? = null
+    try {
+        return coroutineScope {
+            val writer = launch {
+                try {
+                    source.collect { chunk ->
+                        blockingBodyStreamCall(id) { VaneBodyStreamBridge.write(id, chunk) }
+                    }
+                    blockingBodyStreamCall(id) { VaneBodyStreamBridge.finish(id) }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (core: VaneException) {
+                    // The request failed (or refused the stream); the execute
+                    // result tells that story — reporting it here too would
+                    // double-report, and racing ahead of a chunk already
+                    // handed off is exactly the flowOn trap the download
+                    // wrapper documents.
+                } catch (failure: Throwable) {
+                    sourceFailure = failure
+                } finally {
+                    // Every writer terminal frees: after a clean finish this
+                    // only drops the id, before one it is the abort that
+                    // fails the request. Never parked here — a call still in
+                    // flight structurally keeps this finally from running.
+                    VaneBodyStreamBridge.free(id)
+                }
+            }
+            try {
+                execute(id)
+            } finally {
+                // The request settled, whatever the source is doing: a
+                // source idle between chunks (or one that never ends) must
+                // not keep the writer alive. A writer parked in a write is
+                // released by the free this cancellation reaches.
+                writer.cancel()
+            }
+        }
+    } catch (failure: Throwable) {
+        if (failure !is CancellationException) {
+            // The source's own error is the story, not the synthetic
+            // Cancelled its abort induced on the request.
+            sourceFailure?.let { throw it }
+        }
+        throw failure
+    } finally {
+        // Backstop for cancellation between create and the writer's launch;
+        // idempotent everywhere else.
+        VaneBodyStreamBridge.free(id)
+    }
+}
+
+/**
+ * One blocking body-stream call, parked on [Dispatchers.IO], that a
+ * cancelled writer can always interrupt promptly — [readChunkCancellably]'s
+ * twin, with [VaneBodyStreamBridge.free] in the token's role.
+ */
+private suspend fun blockingBodyStreamCall(
+    id: ULong,
+    call: () -> Unit,
+): Unit = coroutineScope {
+    // runCatching so a core failure travels back as a value: an async that
+    // throws would instead fail this scope out-of-band.
+    val work = async(Dispatchers.IO) { runCatching(call) }
+    try {
+        work.await().getOrThrow()
+    } catch (cancellation: CancellationException) {
+        // Cancelled while the call is parked in the FFI: only freeing the
+        // stream makes a parked write return. Fire it BEFORE this scope
+        // waits for the worker on the way out — that wait is also what
+        // guarantees the writer's finally runs strictly after the call let
+        // go.
+        VaneBodyStreamBridge.free(id)
+        throw cancellation
+    }
+}
+
 // MARK: - Retrofit-style Interface
 
 typealias VaneRequestInterceptor = suspend (VaneRequest) -> VaneRequest
@@ -339,6 +495,20 @@ internal object VaneCancelTokenBridge {
         create = { createCancelToken() }
         cancel = { id -> cancelById(id) }
         free = { id -> freeCancelToken(id) }
+    }
+}
+
+internal object VaneBodyStreamBridge {
+    var create: (ULong?) -> ULong = { contentLength -> createBodyStream(contentLength) }
+    var write: (ULong, ByteArray) -> Unit = { id, chunk -> writeBodyStreamChunk(id, chunk) }
+    var finish: (ULong) -> Unit = { id -> finishBodyStream(id) }
+    var free: (ULong) -> Unit = { id -> freeBodyStream(id) }
+
+    fun reset() {
+        create = { contentLength -> createBodyStream(contentLength) }
+        write = { id, chunk -> writeBodyStreamChunk(id, chunk) }
+        finish = { id -> finishBodyStream(id) }
+        free = { id -> freeBodyStream(id) }
     }
 }
 
@@ -585,6 +755,8 @@ class VaneRequestBuilder internal constructor(
     private var queryParams = mutableMapOf<String, String>()
     var body: ByteArray? = null
     private var bodyFilePath: String? = null
+    private var bodyStreamSource: Flow<ByteArray>? = null
+    private var bodyStreamContentLength: ULong? = null
     private var responseBodyPath: String? = null
     private var uploadProgress: VaneProgressCallback? = null
     private var downloadProgress: VaneProgressCallback? = null
@@ -617,12 +789,31 @@ class VaneRequestBuilder internal constructor(
     fun body(body: ByteArray): VaneRequestBuilder {
         this.body = body
         bodyFilePath = null
+        bodyStreamSource = null
         return this
     }
 
     fun bodyFile(path: String): VaneRequestBuilder {
         body = null
         bodyFilePath = path
+        bodyStreamSource = null
+        return this
+    }
+
+    /**
+     * Streams the request body from [source] instead of holding it in
+     * memory. The body shapes are mutually exclusive: this clears [body] and
+     * [bodyFile], and either of those clears this. Ceilings and the abort
+     * contract are documented on the client-level overload,
+     * [VaneClient.executeAsync] — in one line: no retry, body-keeping
+     * redirects come back refused, HTTP/3-to-TCP fallback only before the
+     * first consumed byte, and the whole upload must fit [timeout].
+     */
+    fun bodyStream(source: Flow<ByteArray>, contentLength: ULong? = null): VaneRequestBuilder {
+        bodyStreamSource = source
+        bodyStreamContentLength = contentLength
+        body = null
+        bodyFilePath = null
         return this
     }
 
@@ -759,8 +950,15 @@ class VaneRequestBuilder internal constructor(
             timeoutSeconds = timeoutSeconds,
             followRedirects = followRedirects
         )
+        val streamedSource = bodyStreamSource
         try {
-            executor(request)
+            if (streamedSource == null) {
+                executor(request)
+            } else {
+                withStreamedBody(streamedSource, bodyStreamContentLength) { id ->
+                    executor(request.copy(bodyStreamId = id))
+                }
+            }
         } finally {
             if (progressId != null) {
                 progressJob?.cancelAndJoin()
