@@ -2261,6 +2261,15 @@ data class VaneRequest (
     , 
     var `bodyFilePath`: kotlin.String?
     , 
+    /**
+     * A [`create_body_stream`] id: the caller pushes the body in chunks
+     * instead of materializing it. Mutually exclusive with `body` and
+     * `body_file_path`. A streamed body is one-shot — see the streamed-body
+     * rules on retry, redirects and transport fallback in
+     * `docs/upload-streaming-design.md`.
+     */
+    var `bodyStreamId`: kotlin.ULong? = null 
+    , 
     var `responseBodyPath`: kotlin.String?
     , 
     var `cancelTokenId`: kotlin.ULong?
@@ -2292,6 +2301,7 @@ public object FfiConverterTypeVaneRequest: FfiConverterRustBuffer<VaneRequest> {
             FfiConverterMapStringString.read(buf),
             FfiConverterOptionalByteArray.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalULong.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalULong.read(buf),
             FfiConverterOptionalULong.read(buf),
@@ -2307,6 +2317,7 @@ public object FfiConverterTypeVaneRequest: FfiConverterRustBuffer<VaneRequest> {
             FfiConverterMapStringString.allocationSize(value.`queryParams`) +
             FfiConverterOptionalByteArray.allocationSize(value.`body`) +
             FfiConverterOptionalString.allocationSize(value.`bodyFilePath`) +
+            FfiConverterOptionalULong.allocationSize(value.`bodyStreamId`) +
             FfiConverterOptionalString.allocationSize(value.`responseBodyPath`) +
             FfiConverterOptionalULong.allocationSize(value.`cancelTokenId`) +
             FfiConverterOptionalULong.allocationSize(value.`progressId`) +
@@ -2321,6 +2332,7 @@ public object FfiConverterTypeVaneRequest: FfiConverterRustBuffer<VaneRequest> {
             FfiConverterMapStringString.write(value.`queryParams`, buf)
             FfiConverterOptionalByteArray.write(value.`body`, buf)
             FfiConverterOptionalString.write(value.`bodyFilePath`, buf)
+            FfiConverterOptionalULong.write(value.`bodyStreamId`, buf)
             FfiConverterOptionalString.write(value.`responseBodyPath`, buf)
             FfiConverterOptionalULong.write(value.`cancelTokenId`, buf)
             FfiConverterOptionalULong.write(value.`progressId`, buf)
