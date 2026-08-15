@@ -4,12 +4,18 @@ import android.content.Context
 import android.util.Log
 import java.net.URLEncoder
 import java.nio.charset.Charset
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -145,6 +151,159 @@ suspend fun VaneClient.warmupAsync(url: String? = null) {
     }
 }
 
+// MARK: - Streaming
+
+/**
+ * A response whose headers have arrived and whose body is still streaming.
+ *
+ * [head] is the familiar [VaneResponse] — status, headers, final URL, cookies,
+ * negotiated protocol — with [VaneResponse.body] empty by contract: [body]
+ * delivers it instead.
+ *
+ * [body] is cold, single-collection and demand-driven: each chunk is pulled
+ * off the native transport only when the collector asks for it — there is no
+ * producer coroutine and no buffer — so a slow collector stalls the sender
+ * through QUIC/TCP flow control instead of buffering without bound. Chunk
+ * boundaries carry no meaning. A failure after the headers surfaces as an
+ * error on this flow, not
+ * as a failed request. Cancelling the collecting coroutine cancels the
+ * request's token first — that is what interrupts a pull parked in the FFI —
+ * then closes the native stream, discarding its connection; only a body
+ * collected to the end returns the connection to the pool.
+ *
+ * Always collect (or cancel a collection of) [body]: an abandoned,
+ * never-collected body holds its connection until the garbage collector
+ * reclaims the native stream. Collecting a second time throws
+ * [IllegalStateException].
+ */
+class VaneStreamingResponse(
+    val head: VaneResponse,
+    val body: Flow<ByteArray>,
+)
+
+/**
+ * Like [executeAsync], but resumes as soon as the final response's headers
+ * are in, with the body left to stream; see [VaneStreamingResponse].
+ *
+ * Everything up to the headers behaves exactly like [executeAsync]: the same
+ * redirect chain, retry policy, HTTP/3-to-TCP fallback, cookies, pins and
+ * deadline. Differences, all deliberate:
+ *
+ * - [VaneRequest.responseBodyPath] is refused by the core: the stream
+ *   replaces the file escape hatch.
+ * - Progress callbacks are meaningless here: the chunks themselves are the
+ *   download progress.
+ * - [VaneRequest.cancelTokenId] composes: cancelling that token aborts the
+ *   header phase, or fails the body flow mid-stream. Cancelling the body
+ *   collection cancels it too. When the request carries no token, the
+ *   wrapper runs one internally so cancelling a parked read stays prompt.
+ */
+suspend fun VaneClient.executeStreaming(request: VaneRequest): VaneStreamingResponse {
+    val ownedToken = if (request.cancelTokenId == null) VaneCancelToken() else null
+    val effectiveRequest =
+        if (ownedToken != null) request.copy(cancelTokenId = ownedToken.id) else request
+    val cancelNative: () -> Unit =
+        if (ownedToken != null) {
+            { ownedToken.cancel() }
+        } else {
+            val callerTokenId = effectiveRequest.cancelTokenId!!
+            ({ VaneCancelTokenBridge.cancel(callerTokenId) })
+        }
+    val (inner, head) = try {
+        withContext(Dispatchers.IO) {
+            val stream = executeStreamingRequest(effectiveRequest)
+            stream to stream.head()
+        }
+    } catch (t: Throwable) {
+        ownedToken?.close()
+        throw t
+    }
+    return VaneStreamingResponse(
+        head = head,
+        body = streamingBodyFlow(
+            stream = inner,
+            cancelToken = cancelNative,
+            releaseToken = { ownedToken?.close() },
+        ),
+    )
+}
+
+/**
+ * Bridges one native response stream into a cold, single-collection,
+ * demand-driven [Flow]. The shape carries the two invariants; refactor with
+ * care:
+ *
+ * - **No read-ahead, by construction.** There is no producer coroutine and
+ *   no channel: each chunk is one [readChunkCancellably] call made from the
+ *   collector's own loop, so the core is never asked for bytes the collector
+ *   has not asked for — and a core that is not pulled does not read the
+ *   socket, which stalls the sender through QUIC/TCP flow control.
+ *   Re-introducing a `flowOn`/`buffer` producer looks equivalent and is not,
+ *   twice over: it adds run-ahead the size of the buffer, and — the trap —
+ *   `flowOn`'s `collect` is a `coroutineScope` that will not unwind on
+ *   cancellation until its producer child returns from the parked FFI read,
+ *   while the `onCompletion` cancel that would release that read only runs
+ *   after the unwind. Cancellation then deadlocks until the read times out,
+ *   and a failing producer can overtake an in-flight chunk out-of-band.
+ * - **Token before close.** A pull parked in the FFI holds the native
+ *   stream's lock, and `closeStream` waits on that lock; only cancelling the
+ *   request's token makes a parked pull return. [readChunkCancellably] fires
+ *   the token the moment collection is cancelled, and the `finally` here —
+ *   which structurally cannot run until the pull has returned — is the only
+ *   place that closes.
+ */
+internal fun streamingBodyFlow(
+    stream: VaneResponseStreamInterface,
+    cancelToken: () -> Unit,
+    releaseToken: () -> Unit = {},
+): Flow<ByteArray> {
+    val collected = AtomicBoolean(false)
+    return flow {
+        check(collected.compareAndSet(false, true)) {
+            "A streaming response body can be collected only once"
+        }
+        try {
+            while (true) emit(readChunkCancellably(stream, cancelToken) ?: break)
+        } finally {
+            // After EOF the connection is already pooled and after a failure
+            // already discarded — closeStream is an idempotent no-op there.
+            // After a cancellation it is what discards the connection.
+            // NonCancellable because this must still run when the collector
+            // was cancelled; IO because closeStream is a blocking native call.
+            withContext(NonCancellable + Dispatchers.IO) {
+                stream.closeStream()
+                (stream as? Disposable)?.destroy()
+                releaseToken()
+            }
+        }
+    }
+}
+
+/**
+ * One blocking pull, parked on [Dispatchers.IO], that a cancelled collector
+ * can always interrupt promptly.
+ */
+private suspend fun readChunkCancellably(
+    stream: VaneResponseStreamInterface,
+    cancelToken: () -> Unit,
+): ByteArray? = coroutineScope {
+    // runCatching so a stream failure travels back as a value: an async that
+    // throws would instead fail this scope out-of-band and could overtake a
+    // chunk already handed to the collector but not yet processed.
+    val read = async(Dispatchers.IO) { runCatching { stream.readChunk() } }
+    try {
+        read.await().getOrThrow()
+    } catch (cancellation: CancellationException) {
+        // Cancelled while the read is parked in the FFI: only the native
+        // token makes the parked call return. Fire it BEFORE this scope
+        // waits for the read coroutine on the way out — that wait is also
+        // what guarantees close (in the caller's finally) runs strictly
+        // after the read has let go of the stream's lock.
+        cancelToken()
+        throw cancellation
+    }
+}
+
 // MARK: - Retrofit-style Interface
 
 typealias VaneRequestInterceptor = suspend (VaneRequest) -> VaneRequest
@@ -224,6 +383,8 @@ class VaneSession(
     private val responseInterceptors = responseInterceptors.toMutableList()
     private val errorInterceptors = errorInterceptors.toMutableList()
     private var transportExecutor: (suspend (VaneRequest) -> VaneResponse)? = null
+    private var streamingTransportExecutor:
+        (suspend (VaneRequest) -> VaneStreamingResponse)? = null
 
     private val client: VaneClient by lazy {
         createVaneClient(configuration)
@@ -236,9 +397,13 @@ class VaneSession(
         requestInterceptors: List<VaneRequestInterceptor> = emptyList(),
         responseInterceptors: List<VaneResponseInterceptor> = emptyList(),
         errorInterceptors: List<VaneErrorInterceptor> = emptyList(),
+        // Before transportExecutor so existing trailing-lambda call sites keep
+        // binding the lambda to transportExecutor.
+        streamingTransportExecutor: (suspend (VaneRequest) -> VaneStreamingResponse)? = null,
         transportExecutor: suspend (VaneRequest) -> VaneResponse
     ) : this(configuration, requestInterceptors, responseInterceptors, errorInterceptors) {
         this.transportExecutor = transportExecutor
+        this.streamingTransportExecutor = streamingTransportExecutor
     }
 
     // MARK: - Request Building
@@ -357,6 +522,26 @@ class VaneSession(
             .downloadToFile(outputPath)
         if (onDownloadProgress != null) builder.onDownloadProgress(onDownloadProgress)
         return builder.execute()
+    }
+
+    /**
+     * Like [execute], but resumes as soon as the final response's headers are
+     * in, with the body left to stream; see [VaneStreamingResponse].
+     *
+     * Request interceptors run; response and error interceptors do NOT — an
+     * interceptor written against a buffered [VaneResponse] cannot rewrite a
+     * body that has not arrived. Validate status off the head, e.g.
+     * `response.head.validateStatus()`. The other deltas from [execute] are
+     * documented on [VaneClient.executeStreaming].
+     */
+    suspend fun executeStreaming(request: VaneRequest): VaneStreamingResponse {
+        var interceptedRequest = request
+        for (interceptor in requestInterceptors.toList()) {
+            interceptedRequest = interceptor(interceptedRequest)
+        }
+        val transport = streamingTransportExecutor
+            ?: { req -> client.executeStreaming(req) }
+        return transport(interceptedRequest)
     }
 
     suspend fun execute(request: VaneRequest): VaneResponse {

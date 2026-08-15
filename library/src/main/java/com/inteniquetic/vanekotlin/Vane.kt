@@ -662,6 +662,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_vane_checksum_method_vaneclient_execute_request(
     ): Int
+    external fun uniffi_vane_checksum_method_vaneclient_execute_streaming_request(
+    ): Int
     external fun uniffi_vane_checksum_method_vaneclient_get_request(
     ): Int
     external fun uniffi_vane_checksum_method_vaneclient_patch_request(
@@ -673,6 +675,12 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_vane_checksum_method_vaneclient_set_certificate_pins(
     ): Int
     external fun uniffi_vane_checksum_method_vaneclient_warmup(
+    ): Int
+    external fun uniffi_vane_checksum_method_vaneresponsestream_close_stream(
+    ): Int
+    external fun uniffi_vane_checksum_method_vaneresponsestream_head(
+    ): Int
+    external fun uniffi_vane_checksum_method_vaneresponsestream_read_chunk(
     ): Int
     external fun ffi_vane_uniffi_contract_version(
     ): Int
@@ -704,6 +712,8 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_vane_fn_method_vaneclient_execute_request(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_vane_fn_method_vaneclient_execute_streaming_request(`ptr`: Long,`request`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
     external fun uniffi_vane_fn_method_vaneclient_get_request(`ptr`: Long,`url`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_vane_fn_method_vaneclient_patch_request(`ptr`: Long,`url`: RustBuffer.ByValue,`body`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -716,6 +726,16 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_vane_fn_method_vaneclient_warmup(`ptr`: Long,`url`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_vane_fn_clone_vaneresponsestream(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
+    external fun uniffi_vane_fn_free_vaneresponsestream(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_vane_fn_method_vaneresponsestream_close_stream(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_vane_fn_method_vaneresponsestream_head(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_vane_fn_method_vaneresponsestream_read_chunk(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_vane_fn_func_cancel_by_id(`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_vane_fn_func_create_cancel_token(uniffi_out_err: UniffiRustCallStatus, 
@@ -892,6 +912,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_vane_checksum_method_vaneclient_execute_request() != 51840) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_vane_checksum_method_vaneclient_execute_streaming_request() != 17751) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_vane_checksum_method_vaneclient_get_request() != 12326) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -908,6 +931,15 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_vane_checksum_method_vaneclient_warmup() != 42407) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_method_vaneresponsestream_close_stream() != 16563) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_method_vaneresponsestream_head() != 54130) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_vane_checksum_method_vaneresponsestream_read_chunk() != 20515) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1322,6 +1354,14 @@ public interface VaneClientInterface {
     
     fun `executeRequest`(`request`: VaneRequest): VaneResponse
     
+    /**
+     * [`Self::execute_streaming`] for the bindings: same contract, with the
+     * stream behind an `Arc` because UniFFI hands objects out by reference.
+     * `Arc<Self>` receiver on purpose — the stream keeps the client alive so
+     * a drained body can return its connection to the pool.
+     */
+    fun `executeStreamingRequest`(`request`: VaneRequest): VaneResponseStream
+    
     fun `getRequest`(`url`: kotlin.String): VaneResponse
     
     fun `patchRequest`(`url`: kotlin.String, `body`: kotlin.ByteArray?): VaneResponse
@@ -1513,6 +1553,26 @@ open class VaneClient: Disposable, AutoCloseable, VaneClientInterface
     
 
     
+    /**
+     * [`Self::execute_streaming`] for the bindings: same contract, with the
+     * stream behind an `Arc` because UniFFI hands objects out by reference.
+     * `Arc<Self>` receiver on purpose — the stream keeps the client alive so
+     * a drained body can return its connection to the pool.
+     */
+    @Throws(VaneException::class)override fun `executeStreamingRequest`(`request`: VaneRequest): VaneResponseStream {
+            return FfiConverterTypeVaneResponseStream.lift(
+    callWithHandle {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.uniffi_vane_fn_method_vaneclient_execute_streaming_request(
+        it,
+        FfiConverterTypeVaneRequest.lower(`request`),_status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(VaneException::class)override fun `getRequest`(`url`: kotlin.String): VaneResponse {
             return FfiConverterTypeVaneResponse.lift(
     callWithHandle {
@@ -1652,6 +1712,350 @@ public object FfiConverterTypeVaneClient: FfiConverter<VaneClient, Long> {
     override fun allocationSize(value: VaneClient) = 8UL
 
     override fun write(value: VaneClient, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * An HTTP response whose headers have arrived and whose body is read
+ * incrementally by the caller.
+ *
+ * Pull-based on purpose: the core never reads ahead of the caller, so a slow
+ * consumer stalls the peer through QUIC flow control / the TCP receive
+ * window instead of buffering without bound. `read_chunk` blocks until body
+ * bytes arrive, the body ends (`None`), or the stream fails — a transport
+ * error after the headers were delivered surfaces here, not as a failed
+ * request. Abandoning the stream (`close`, or dropping it) discards the
+ * underlying connection; only a stream read to its end returns the
+ * connection to the pool.
+ */
+public interface VaneResponseStreamInterface {
+    
+    /**
+     * Releases the stream without draining it — [`Self::close`] under the
+     * name the bindings see. It cannot export as `close`: UniFFI's Kotlin
+     * objects already implement `AutoCloseable.close()` (free the handle),
+     * and a same-signature exported `close()` fails to compile there.
+     */
+    fun `closeStream`()
+    
+    /**
+     * The response head: status, headers, final URL, cookies, protocol.
+     * `body` is empty by contract — the stream itself delivers it.
+     */
+    fun `head`(): VaneResponse
+    
+    /**
+     * Blocks until the next body chunk arrives and returns it; `Ok(None)`
+     * once the body is complete. Chunk boundaries carry no meaning.
+     *
+     * A pull that sees no data for roughly the request's timeout fails with
+     * [`VaneError::Timeout`]. After any error the stream is dead: the
+     * connection has been discarded and every later pull repeats the same
+     * error. After `close`, pulls return `Ok(None)`.
+     */
+    fun `readChunk`(): kotlin.ByteArray?
+    
+    companion object
+}
+
+/**
+ * An HTTP response whose headers have arrived and whose body is read
+ * incrementally by the caller.
+ *
+ * Pull-based on purpose: the core never reads ahead of the caller, so a slow
+ * consumer stalls the peer through QUIC flow control / the TCP receive
+ * window instead of buffering without bound. `read_chunk` blocks until body
+ * bytes arrive, the body ends (`None`), or the stream fails — a transport
+ * error after the headers were delivered surfaces here, not as a failed
+ * request. Abandoning the stream (`close`, or dropping it) discards the
+ * underlying connection; only a stream read to its end returns the
+ * connection to the pool.
+ */
+open class VaneResponseStream: Disposable, AutoCloseable, VaneResponseStreamInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_vane_fn_free_vaneresponsestream(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_vane_fn_clone_vaneresponsestream(handle, status)
+        }
+    }
+
+    
+    /**
+     * Releases the stream without draining it — [`Self::close`] under the
+     * name the bindings see. It cannot export as `close`: UniFFI's Kotlin
+     * objects already implement `AutoCloseable.close()` (free the handle),
+     * and a same-signature exported `close()` fails to compile there.
+     */override fun `closeStream`()
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_vane_fn_method_vaneresponsestream_close_stream(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * The response head: status, headers, final URL, cookies, protocol.
+     * `body` is empty by contract — the stream itself delivers it.
+     */override fun `head`(): VaneResponse {
+            return FfiConverterTypeVaneResponse.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_vane_fn_method_vaneresponsestream_head(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Blocks until the next body chunk arrives and returns it; `Ok(None)`
+     * once the body is complete. Chunk boundaries carry no meaning.
+     *
+     * A pull that sees no data for roughly the request's timeout fails with
+     * [`VaneError::Timeout`]. After any error the stream is dead: the
+     * connection has been discarded and every later pull repeats the same
+     * error. After `close`, pulls return `Ok(None)`.
+     */
+    @Throws(VaneException::class)override fun `readChunk`(): kotlin.ByteArray? {
+            return FfiConverterOptionalByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(VaneException) { _status ->
+    UniffiLib.uniffi_vane_fn_method_vaneresponsestream_read_chunk(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeVaneResponseStream: FfiConverter<VaneResponseStream, Long> {
+    override fun lower(value: VaneResponseStream): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): VaneResponseStream {
+        return VaneResponseStream(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): VaneResponseStream {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: VaneResponseStream) = 8UL
+
+    override fun write(value: VaneResponseStream, buf: ByteBuffer) {
         buf.putLong(lower(value))
     }
 }
