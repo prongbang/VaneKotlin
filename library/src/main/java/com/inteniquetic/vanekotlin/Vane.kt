@@ -2348,6 +2348,47 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
 
 
 
+/**
+ * One response header occurrence: an ordered `(name, value)` pair.
+ */
+data class VaneHeader (
+    var `name`: kotlin.String
+    , 
+    var `value`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeVaneHeader: FfiConverterRustBuffer<VaneHeader> {
+    override fun read(buf: ByteBuffer): VaneHeader {
+        return VaneHeader(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: VaneHeader) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`value`)
+    )
+
+    override fun write(value: VaneHeader, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`value`, buf)
+    }
+}
+
+
+
 data class VaneProgressSnapshot (
     var `uploadSent`: kotlin.ULong
     , 
@@ -2500,14 +2541,18 @@ data class VaneResponse (
     var `statusCode`: kotlin.UShort
     , 
     /**
-     * One entry per header name, keyed lowercase. A name the server repeated
-     * carries its values comma-joined in wire order (`"a, b"`, RFC 9110
-     * §5.2) — identically on both transports. Two exceptions: `set-cookie`
-     * (see [`Self::set_cookie`]) and `location`, which is single-valued by
-     * RFC 9110 §10.2.2 and keeps its first occurrence — the one the redirect
-     * gate acts on — rather than joining into a non-URL.
+     * Ordered `(name, value)` pairs, names lowercased, duplicates preserved,
+     * `set-cookie` inline in arrival position — including cookies the jar
+     * refused (a `Domain` that is a public suffix, or an IP literal), because
+     * this reports what the server sent. On HTTP/3 this is wire order; on TCP
+     * it is reqwest `HeaderMap` order (duplicates of a name grouped). The
+     * redirect gate acts on the FIRST `location` occurrence (RFC 9110
+     * §10.2.2); derived map views are first-wins and live binding-side.
+     *
+     * Redirects: the final response only. Intermediate hops still reach the
+     * cookie jar as before.
      */
-    var `headers`: Map<kotlin.String, kotlin.String>
+    var `headers`: List<VaneHeader>
     , 
     var `body`: kotlin.ByteArray
     , 
@@ -2518,24 +2563,21 @@ data class VaneResponse (
     var `url`: kotlin.String
     , 
     /**
-     * Raw `Set-Cookie` values from the final response, in wire order.
-     *
-     * Unfiltered: a cookie the jar refused (a `Domain` that is a public
-     * suffix, or an IP literal) still appears here, because this reports what
-     * the server sent. Never folded into `headers` — a `HashMap` cannot hold
-     * repeats and RFC 6265 forbids comma-joining `Set-Cookie` (an `Expires`
-     * value contains a comma, so the join is unsplittable).
-     *
-     * Redirects: the final response only. Intermediate hops still reach the
-     * cookie jar as before.
-     */
-    var `setCookie`: List<kotlin.String> = listOf() 
-    , 
-    /**
      * Protocol that served the final response. `None` when no exchange
      * completed, or when the transport could not say.
      */
     var `httpVersion`: VaneHttpVersion? = null 
+    , 
+    /**
+     * IP literal of the socket peer of the connection that produced the
+     * final hop's response — `"203.0.113.7"`, `"2001:db8::1"`: no port, no
+     * brackets. Direct HTTP/3: the resolved origin. Via a MASQUE (H3) or
+     * CONNECT (TCP) proxy: the proxy — the actual socket peer, which is all
+     * reqwest can ever report, and the H3 side matches it rather than
+     * inventing a per-transport difference. `None` when the transport could
+     * not say.
+     */
+    var `remoteIp`: kotlin.String? = null 
     
 ){
     
@@ -2553,36 +2595,36 @@ public object FfiConverterTypeVaneResponse: FfiConverterRustBuffer<VaneResponse>
     override fun read(buf: ByteBuffer): VaneResponse {
         return VaneResponse(
             FfiConverterUShort.read(buf),
-            FfiConverterMapStringString.read(buf),
+            FfiConverterSequenceTypeVaneHeader.read(buf),
             FfiConverterByteArray.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
-            FfiConverterSequenceString.read(buf),
             FfiConverterOptionalTypeVaneHttpVersion.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
     override fun allocationSize(value: VaneResponse) = (
             FfiConverterUShort.allocationSize(value.`statusCode`) +
-            FfiConverterMapStringString.allocationSize(value.`headers`) +
+            FfiConverterSequenceTypeVaneHeader.allocationSize(value.`headers`) +
             FfiConverterByteArray.allocationSize(value.`body`) +
             FfiConverterOptionalString.allocationSize(value.`bodyFilePath`) +
             FfiConverterBoolean.allocationSize(value.`isSuccess`) +
             FfiConverterString.allocationSize(value.`url`) +
-            FfiConverterSequenceString.allocationSize(value.`setCookie`) +
-            FfiConverterOptionalTypeVaneHttpVersion.allocationSize(value.`httpVersion`)
+            FfiConverterOptionalTypeVaneHttpVersion.allocationSize(value.`httpVersion`) +
+            FfiConverterOptionalString.allocationSize(value.`remoteIp`)
     )
 
     override fun write(value: VaneResponse, buf: ByteBuffer) {
             FfiConverterUShort.write(value.`statusCode`, buf)
-            FfiConverterMapStringString.write(value.`headers`, buf)
+            FfiConverterSequenceTypeVaneHeader.write(value.`headers`, buf)
             FfiConverterByteArray.write(value.`body`, buf)
             FfiConverterOptionalString.write(value.`bodyFilePath`, buf)
             FfiConverterBoolean.write(value.`isSuccess`, buf)
             FfiConverterString.write(value.`url`, buf)
-            FfiConverterSequenceString.write(value.`setCookie`, buf)
             FfiConverterOptionalTypeVaneHttpVersion.write(value.`httpVersion`, buf)
+            FfiConverterOptionalString.write(value.`remoteIp`, buf)
     }
 }
 
@@ -3194,6 +3236,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeVaneHeader: FfiConverterRustBuffer<List<VaneHeader>> {
+    override fun read(buf: ByteBuffer): List<VaneHeader> {
+        val len = buf.getInt()
+        return List<VaneHeader>(len) {
+            FfiConverterTypeVaneHeader.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<VaneHeader>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeVaneHeader.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<VaneHeader>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeVaneHeader.write(it, buf)
         }
     }
 }

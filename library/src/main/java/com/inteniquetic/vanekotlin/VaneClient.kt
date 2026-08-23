@@ -1217,6 +1217,24 @@ val VaneResponse.prettyJson: String?
         null
     }
 
+/**
+ * First-wins map view of [VaneResponse.headers] — the first occurrence of a
+ * name wins, matching the core's redirect rule for `location` (RFC 9110
+ * §10.2.2). Consumers that need every duplicate read the ordered list itself.
+ */
+val VaneResponse.headerMap: Map<String, String>
+    get() {
+        val map = LinkedHashMap<String, String>()
+        for (header in headers) {
+            if (header.name !in map) map[header.name] = header.value
+        }
+        return map
+    }
+
+/** Every `set-cookie` value the server sent, in arrival order. */
+val VaneResponse.setCookie: List<String>
+    get() = headers.filter { it.name == "set-cookie" }.map { it.value }
+
 // MARK: - Retrofit-style Service Interface
 
 interface VaneService {

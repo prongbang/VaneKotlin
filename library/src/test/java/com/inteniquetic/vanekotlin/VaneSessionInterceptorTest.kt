@@ -41,12 +41,12 @@ class VaneSessionInterceptorTest {
                 )
             },
             responseInterceptors = listOf { response ->
-                response.copy(headers = response.headers + ("x-intercepted" to "true"))
+                response.copy(headers = response.headers + VaneHeader("x-intercepted", "true"))
             },
             errorInterceptors = listOf {
                 VaneResponse(
                     statusCode = 299u,
-                    headers = emptyMap(),
+                    headers = emptyList(),
                     body = "synthetic".toByteArray(),
                     bodyFilePath = null,
                     isSuccess = true,
@@ -62,7 +62,7 @@ class VaneSessionInterceptorTest {
             .execute()
 
         assertEquals(299u.toUShort(), response.statusCode)
-        assertEquals("true", response.headers["x-intercepted"])
+        assertEquals("true", response.headerMap["x-intercepted"])
         assertEquals("synthetic", String(response.body))
     }
 
@@ -76,7 +76,7 @@ class VaneSessionInterceptorTest {
         ) {
             VaneResponse(
                 statusCode = 200u,
-                headers = emptyMap(),
+                headers = emptyList(),
                 body = ByteArray(0),
                 bodyFilePath = null,
                 isSuccess = true,
@@ -103,7 +103,7 @@ class VaneSessionInterceptorTest {
                 capturedRequest = request
                 VaneResponse(
                     statusCode = 204u,
-                    headers = emptyMap(),
+                    headers = emptyList(),
                     body = ByteArray(0),
                     bodyFilePath = null,
                     isSuccess = true,
@@ -117,13 +117,13 @@ class VaneSessionInterceptorTest {
                 request.copy(headers = request.headers + ("x-late" to "1"))
             }
             .addResponseInterceptor { response ->
-                response.copy(headers = response.headers + ("x-response" to "1"))
+                response.copy(headers = response.headers + VaneHeader("x-response", "1"))
             }
 
         val response = session.get("https://example.com/late")
 
         assertEquals("1", capturedRequest?.headers?.get("x-late"))
-        assertEquals("1", response.headers["x-response"])
+        assertEquals("1", response.headerMap["x-response"])
 
         session.clearInterceptors()
         session.get("https://example.com/clear")
@@ -140,7 +140,7 @@ class VaneSessionInterceptorTest {
                 capturedRequest = request
                 VaneResponse(
                     statusCode = 204u,
-                    headers = emptyMap(),
+                    headers = emptyList(),
                     body = ByteArray(0),
                     bodyFilePath = null,
                     isSuccess = true,
@@ -173,7 +173,7 @@ class VaneSessionInterceptorTest {
                 capturedRequest = request
                 VaneResponse(
                     statusCode = 200u,
-                    headers = emptyMap(),
+                    headers = emptyList(),
                     body = ByteArray(0),
                     bodyFilePath = request.responseBodyPath,
                     isSuccess = true,
@@ -220,7 +220,7 @@ class VaneSessionInterceptorTest {
                 capturedRequest = request
                 VaneResponse(
                     statusCode = 200u,
-                    headers = emptyMap(),
+                    headers = emptyList(),
                     body = ByteArray(0),
                     bodyFilePath = request.responseBodyPath,
                     isSuccess = true,
@@ -264,7 +264,7 @@ class VaneSessionInterceptorTest {
     fun responseValidationHelpersThrowOnUnexpectedStatus() {
         val response = VaneResponse(
             statusCode = 404u,
-            headers = emptyMap(),
+            headers = emptyList(),
             body = "missing".toByteArray(),
             bodyFilePath = null,
             isSuccess = false,

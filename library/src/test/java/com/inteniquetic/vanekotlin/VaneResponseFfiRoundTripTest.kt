@@ -16,8 +16,11 @@ import org.junit.Test
  * No native library is loaded: the generated converters serialize into a plain
  * [ByteBuffer], which is exactly the buffer `lowerIntoRustBuffer` /
  * `liftFromRustBuffer` hand to Rust. If the bindings and the core ever desync
- * on `setCookie` / `httpVersion` (order, presence, encoding), that shows up
- * here instead of as garbage at runtime on a device.
+ * on `headers` / `httpVersion` / `remoteIp` (order, presence, encoding), that
+ * shows up here instead of as garbage at runtime on a device. ABI v5 is where
+ * this matters most: `headers` became an ordered `List<VaneHeader>`, the
+ * separate `setCookie` field vanished, and `remoteIp` was appended last — a
+ * layout change no UniFFI checksum guards.
  */
 class VaneResponseFfiRoundTripTest {
     private fun lower(value: VaneResponse): ByteBuffer {
@@ -37,17 +40,24 @@ class VaneResponseFfiRoundTripTest {
     }
 
     private fun populated(
-        setCookie: List<String> = listOf("a=1; Path=/", "b=2; HttpOnly"),
-        httpVersion: VaneHttpVersion? = VaneHttpVersion.HTTP3
+        headers: List<VaneHeader> = listOf(
+            VaneHeader("content-type", "application/json"),
+            VaneHeader("set-cookie", "a=1; Path=/"),
+            VaneHeader("x-multi", "a"),
+            VaneHeader("set-cookie", "b=2; HttpOnly"),
+            VaneHeader("x-multi", "b")
+        ),
+        httpVersion: VaneHttpVersion? = VaneHttpVersion.HTTP3,
+        remoteIp: String? = "203.0.113.7"
     ) = VaneResponse(
         statusCode = 207u,
-        headers = mapOf("content-type" to "application/json", "x-multi" to "a, b"),
+        headers = headers,
         body = byteArrayOf(0x7B, 0x7D, 0x00, -0x01),
         bodyFilePath = "/tmp/vane-download.bin",
         isSuccess = true,
         url = "https://example.com/résumé?q=1",
-        setCookie = setCookie,
-        httpVersion = httpVersion
+        httpVersion = httpVersion,
+        remoteIp = remoteIp
     )
 
     @Test
@@ -62,29 +72,28 @@ class VaneResponseFfiRoundTripTest {
         assertEquals(original.bodyFilePath, decoded.bodyFilePath)
         assertEquals(original.isSuccess, decoded.isSuccess)
         assertEquals(original.url, decoded.url)
-        assertEquals(original.setCookie, decoded.setCookie)
         assertEquals(original.httpVersion, decoded.httpVersion)
+        assertEquals(original.remoteIp, decoded.remoteIp)
     }
 
     @Test
-    fun setCookieKeepsWireOrderRepeatsAndEmbeddedCommas() {
-        // The comma is why Set-Cookie is a list and not a comma-joined header:
-        // an Expires value contains one, so the join would be unsplittable.
-        val cookies = listOf(
-            "sid=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT",
-            "sid=2; Path=/",
-            "sid=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT",
-            "" // a server can send an empty value; it must not be dropped
+    fun headersKeepArrivalOrderRepeatsAndEmbeddedCommas() {
+        // Duplicates stay separate entries in wire position — set-cookie inline
+        // among them, not re-grouped at the tail. The comma is why: an Expires
+        // value contains one, so any join would be unsplittable.
+        val headers = listOf(
+            VaneHeader("set-cookie", "sid=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT"),
+            VaneHeader("x-multi", "first"),
+            VaneHeader("set-cookie", "sid=2; Path=/"),
+            VaneHeader("x-multi", "second"),
+            VaneHeader("set-cookie", "sid=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT"),
+            VaneHeader("x-empty", "") // a server can send an empty value; it must not be dropped
         )
 
-        val decoded = roundTrip(populated(setCookie = cookies))
+        val decoded = roundTrip(populated(headers = headers))
 
-        assertEquals(4, decoded.setCookie.size)
-        assertEquals(cookies, decoded.setCookie)
-        assertEquals(cookies[0], decoded.setCookie[0])
-        assertEquals(cookies[1], decoded.setCookie[1])
-        assertEquals(cookies[2], decoded.setCookie[2])
-        assertEquals(cookies[3], decoded.setCookie[3])
+        assertEquals(6, decoded.headers.size)
+        assertEquals(headers, decoded.headers)
     }
 
     @Test
@@ -119,24 +128,25 @@ class VaneResponseFfiRoundTripTest {
     }
 
     @Test
-    fun defaultsRoundTripAsEmptyListAndNull() {
-        // Built the way callers built it before the two fields existed.
+    fun defaultsRoundTripAsNull() {
+        // Built the way callers built it before the two optional fields existed.
         val original = VaneResponse(
             statusCode = 204u,
-            headers = emptyMap(),
+            headers = emptyList(),
             body = ByteArray(0),
             bodyFilePath = null,
             isSuccess = true,
             url = "https://example.com/empty"
         )
 
-        assertEquals(emptyList<String>(), original.setCookie)
         assertNull(original.httpVersion)
+        assertNull(original.remoteIp)
 
         val decoded = roundTrip(original)
 
-        assertEquals(emptyList<String>(), decoded.setCookie)
         assertNull(decoded.httpVersion)
+        assertNull(decoded.remoteIp)
+        assertEquals(emptyList<VaneHeader>(), decoded.headers)
         assertEquals(0, decoded.body.size)
         assertNull(decoded.bodyFilePath)
         assertEquals(original.url, decoded.url)
@@ -146,22 +156,38 @@ class VaneResponseFfiRoundTripTest {
     fun fieldsAreWrittenInTheOrderTheCoreDeclaresThem() {
         // Decode the buffer by hand with the per-type converters, in the order
         // vane-rs declares VaneResponse. A reordering in either half fails here
-        // even when a whole-struct round trip still happens to agree.
+        // even when a whole-struct round trip still happens to agree. remoteIp
+        // is last — appended in ABI v5, after httpVersion.
         val original = populated(
-            setCookie = listOf("only=1"),
-            httpVersion = VaneHttpVersion.HTTP2
+            headers = listOf(VaneHeader("x-only", "1")),
+            httpVersion = VaneHttpVersion.HTTP2,
+            remoteIp = "2001:db8::1"
         )
         val buf = lower(original)
 
         assertEquals(original.statusCode, FfiConverterUShort.read(buf))
-        assertEquals(original.headers, FfiConverterMapStringString.read(buf))
+        assertEquals(original.headers, FfiConverterSequenceTypeVaneHeader.read(buf))
         assertArrayEquals(original.body, FfiConverterByteArray.read(buf))
         assertEquals(original.bodyFilePath, FfiConverterOptionalString.read(buf))
         assertEquals(original.isSuccess, FfiConverterBoolean.read(buf))
         assertEquals(original.url, FfiConverterString.read(buf))
-        assertEquals(listOf("only=1"), FfiConverterSequenceString.read(buf))
         assertEquals(VaneHttpVersion.HTTP2, FfiConverterOptionalTypeVaneHttpVersion.read(buf))
+        assertEquals("2001:db8::1", FfiConverterOptionalString.read(buf))
         assertFalse("junk remaining after the last field", buf.hasRemaining())
+    }
+
+    @Test
+    fun headerNameAndValueAreWrittenInDeclarationOrder() {
+        // VaneHeader is the new inner record: name then value, both strings.
+        val buf = ByteBuffer
+            .allocate(FfiConverterTypeVaneHeader.allocationSize(VaneHeader("set-cookie", "wide=é€𝄞")).toInt())
+            .order(ByteOrder.BIG_ENDIAN)
+        FfiConverterTypeVaneHeader.write(VaneHeader("set-cookie", "wide=é€𝄞"), buf)
+        buf.flip()
+
+        assertEquals("set-cookie", FfiConverterString.read(buf))
+        assertEquals("wide=é€𝄞", FfiConverterString.read(buf))
+        assertFalse("junk remaining after value", buf.hasRemaining())
     }
 
     @Test
@@ -169,8 +195,9 @@ class VaneResponseFfiRoundTripTest {
         // lowerIntoRustBuffer allocates exactly allocationSize bytes, so an
         // under-count is a BufferOverflowException against a Rust-owned buffer.
         val original = populated(
-            setCookie = listOf("wide=é€𝄞", "plain=1"),
-            httpVersion = VaneHttpVersion.HTTP11
+            headers = listOf(VaneHeader("set-cookie", "wide=é€𝄞"), VaneHeader("x-plain", "1")),
+            httpVersion = VaneHttpVersion.HTTP11,
+            remoteIp = "2001:db8::1"
         )
         val size = FfiConverterTypeVaneResponse.allocationSize(original).toInt()
 

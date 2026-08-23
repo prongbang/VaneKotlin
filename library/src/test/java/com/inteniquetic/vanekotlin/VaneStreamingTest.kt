@@ -54,7 +54,7 @@ class VaneStreamingTest {
 
         override fun head(): VaneResponse = VaneResponse(
             statusCode = 200u,
-            headers = emptyMap(),
+            headers = emptyList(),
             body = ByteArray(0),
             bodyFilePath = null,
             isSuccess = true,
@@ -206,7 +206,7 @@ class VaneStreamingTest {
                 VaneStreamingResponse(
                     head = VaneResponse(
                         statusCode = 200u,
-                        headers = emptyMap(),
+                        headers = emptyList(),
                         body = ByteArray(0),
                         bodyFilePath = null,
                         isSuccess = true,

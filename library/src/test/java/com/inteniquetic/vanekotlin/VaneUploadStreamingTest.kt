@@ -341,7 +341,7 @@ class VaneUploadStreamingTest {
                 }
                 VaneResponse(
                     statusCode = 200u,
-                    headers = emptyMap(),
+                    headers = emptyList(),
                     body = ByteArray(0),
                     bodyFilePath = null,
                     isSuccess = true,

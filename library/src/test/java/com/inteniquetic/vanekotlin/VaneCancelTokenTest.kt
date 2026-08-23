@@ -87,7 +87,7 @@ class VaneCancelTokenTest {
                     capturedRequest = request
                     VaneResponse(
                         statusCode = 204u,
-                        headers = emptyMap(),
+                        headers = emptyList(),
                         body = ByteArray(0),
                         bodyFilePath = null,
                         isSuccess = true,
