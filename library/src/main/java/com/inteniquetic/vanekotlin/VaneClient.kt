@@ -1140,6 +1140,34 @@ class VaneConfigurationBuilder {
         return this
     }
 
+    fun maxRedirects(value: UInt): VaneConfigurationBuilder {
+        config.maxRedirects = value
+        return this
+    }
+
+    fun tlsMinVersion(value: VaneTlsVersion): VaneConfigurationBuilder {
+        config.tlsMinVersion = value
+        return this
+    }
+
+    fun tlsMaxVersion(value: VaneTlsVersion): VaneConfigurationBuilder {
+        config.tlsMaxVersion = value
+        return this
+    }
+
+    fun customRootCertificates(pems: List<String>): VaneConfigurationBuilder {
+        config.customRootCertificates = pems.toList()
+        return this
+    }
+
+    fun clientCertificate(certificatePem: String, privateKeyPem: String): VaneConfigurationBuilder {
+        config.clientCertificate = VaneClientCertificate(
+            certificatePem = certificatePem,
+            privateKeyPem = privateKeyPem
+        )
+        return this
+    }
+
     fun build(): VaneClientConfig {
         return config
     }

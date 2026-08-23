@@ -1157,6 +1157,29 @@ public object FfiConverterUShort: FfiConverter<UShort, Short> {
 /**
  * @suppress
  */
+public object FfiConverterUInt: FfiConverter<UInt, Int> {
+    override fun lift(value: Int): UInt {
+        return value.toUInt()
+    }
+
+    override fun read(buf: ByteBuffer): UInt {
+        return lift(buf.getInt())
+    }
+
+    override fun lower(value: UInt): Int {
+        return value.toInt()
+    }
+
+    override fun allocationSize(value: UInt) = 4UL
+
+    override fun write(value: UInt, buf: ByteBuffer) {
+        buf.putInt(value.toInt())
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterULong: FfiConverter<ULong, Long> {
     override fun lift(value: Long): ULong {
         return value.toULong()
@@ -2090,6 +2113,51 @@ public object FfiConverterTypeVaneResponseStream: FfiConverter<VaneResponseStrea
 
 
 
+data class VaneClientCertificate (
+    /**
+     * PEM, leaf first, optionally followed by intermediates (full chain).
+     */
+    var `certificatePem`: kotlin.String
+    , 
+    /**
+     * PEM PKCS#8, SEC1, or PKCS#1 private key. Never logged, never echoed in
+     * errors, never printed by Debug.
+     */
+    var `privateKeyPem`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeVaneClientCertificate: FfiConverterRustBuffer<VaneClientCertificate> {
+    override fun read(buf: ByteBuffer): VaneClientCertificate {
+        return VaneClientCertificate(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: VaneClientCertificate) = (
+            FfiConverterString.allocationSize(value.`certificatePem`) +
+            FfiConverterString.allocationSize(value.`privateKeyPem`)
+    )
+
+    override fun write(value: VaneClientCertificate, buf: ByteBuffer) {
+            FfiConverterString.write(value.`certificatePem`, buf)
+            FfiConverterString.write(value.`privateKeyPem`, buf)
+    }
+}
+
+
+
 data class VaneClientConfig (
     var `baseUrl`: kotlin.String?
     , 
@@ -2129,9 +2197,51 @@ data class VaneClientConfig (
     , 
     var `protocolMode`: VaneProtocolMode
     , 
+    /**
+     * With `proxy_authorization`, the ENTIRE proxy surface — deliberately.
+     * A per-scheme proxy union (rhttp's shape) is meaningless in an
+     * https-only client: with one possible request scheme, first-scheme-match
+     * is always the first entry, i.e. a single proxy URL. SOCKS stays out
+     * too — it would be TCP-only and silently dead on H3 (MASQUE has no
+     * SOCKS analogue). Revisit only if Vane ever accepts http:// URLs (the
+     * https-only rejections in `execute`/`tcp.rs` are the tripwire).
+     */
     var `proxyUrl`: kotlin.String?
     , 
     var `proxyAuthorization`: kotlin.String?
+    , 
+    /**
+     * Redirect hop cap when `follow_redirects` is on. Shared by both
+     * transports: the hop cap is a security bound, not a transport detail.
+     * At most 64; 0 makes the first 3xx a hop-cap refusal.
+     */
+    var `maxRedirects`: kotlin.UInt = 10u 
+    , 
+    /**
+     * Minimum TLS version on the TCP path; `None` = rustls default (1.2).
+     * HTTP/3 is TLS 1.3-always (RFC 9001), so on that path this only
+     * validates compatibility at construction.
+     */
+    var `tlsMinVersion`: VaneTlsVersion? = null 
+    , 
+    /**
+     * Maximum TLS version on the TCP path; `None` = rustls default (1.3).
+     * `Tls12` is rejected at construction with an HTTP/3-capable
+     * `protocol_mode`: QUIC mandates TLS 1.3.
+     */
+    var `tlsMaxVersion`: VaneTlsVersion? = null 
+    , 
+    /**
+     * PEM certificates ADDED to platform trust on both stacks (extend-only;
+     * there is no replace mode and no verification-off switch). Each entry
+     * may hold one certificate or a whole bundle.
+     */
+    var `customRootCertificates`: List<kotlin.String> = listOf() 
+    , 
+    /**
+     * Client certificate (mTLS) presented to the origin on both stacks.
+     */
+    var `clientCertificate`: VaneClientCertificate? = null 
     
 ){
     
@@ -2169,6 +2279,11 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
             FfiConverterTypeVaneProtocolMode.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterOptionalTypeVaneTlsVersion.read(buf),
+            FfiConverterOptionalTypeVaneTlsVersion.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalTypeVaneClientCertificate.read(buf),
         )
     }
 
@@ -2193,7 +2308,12 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
             FfiConverterOptionalString.allocationSize(value.`userAgent`) +
             FfiConverterTypeVaneProtocolMode.allocationSize(value.`protocolMode`) +
             FfiConverterOptionalString.allocationSize(value.`proxyUrl`) +
-            FfiConverterOptionalString.allocationSize(value.`proxyAuthorization`)
+            FfiConverterOptionalString.allocationSize(value.`proxyAuthorization`) +
+            FfiConverterUInt.allocationSize(value.`maxRedirects`) +
+            FfiConverterOptionalTypeVaneTlsVersion.allocationSize(value.`tlsMinVersion`) +
+            FfiConverterOptionalTypeVaneTlsVersion.allocationSize(value.`tlsMaxVersion`) +
+            FfiConverterSequenceString.allocationSize(value.`customRootCertificates`) +
+            FfiConverterOptionalTypeVaneClientCertificate.allocationSize(value.`clientCertificate`)
     )
 
     override fun write(value: VaneClientConfig, buf: ByteBuffer) {
@@ -2218,6 +2338,11 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
             FfiConverterTypeVaneProtocolMode.write(value.`protocolMode`, buf)
             FfiConverterOptionalString.write(value.`proxyUrl`, buf)
             FfiConverterOptionalString.write(value.`proxyAuthorization`, buf)
+            FfiConverterUInt.write(value.`maxRedirects`, buf)
+            FfiConverterOptionalTypeVaneTlsVersion.write(value.`tlsMinVersion`, buf)
+            FfiConverterOptionalTypeVaneTlsVersion.write(value.`tlsMaxVersion`, buf)
+            FfiConverterSequenceString.write(value.`customRootCertificates`, buf)
+            FfiConverterOptionalTypeVaneClientCertificate.write(value.`clientCertificate`, buf)
     }
 }
 
@@ -2822,6 +2947,40 @@ public object FfiConverterTypeVaneProtocolMode: FfiConverterRustBuffer<VaneProto
 
 
 
+enum class VaneTlsVersion {
+    
+    TLS12,
+    TLS13;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeVaneTlsVersion: FfiConverterRustBuffer<VaneTlsVersion> {
+    override fun read(buf: ByteBuffer) = try {
+        VaneTlsVersion.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: VaneTlsVersion) = 4UL
+
+    override fun write(value: VaneTlsVersion, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
 /**
  * @suppress
  */
@@ -2921,6 +3080,38 @@ public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteA
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeVaneClientCertificate: FfiConverterRustBuffer<VaneClientCertificate?> {
+    override fun read(buf: ByteBuffer): VaneClientCertificate? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeVaneClientCertificate.read(buf)
+    }
+
+    override fun allocationSize(value: VaneClientCertificate?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeVaneClientCertificate.allocationSize(value)
+        }
+    }
+
+    override fun write(value: VaneClientCertificate?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeVaneClientCertificate.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeVaneHttpVersion: FfiConverterRustBuffer<VaneHttpVersion?> {
     override fun read(buf: ByteBuffer): VaneHttpVersion? {
         if (buf.get().toInt() == 0) {
@@ -2943,6 +3134,38 @@ public object FfiConverterOptionalTypeVaneHttpVersion: FfiConverterRustBuffer<Va
         } else {
             buf.put(1)
             FfiConverterTypeVaneHttpVersion.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeVaneTlsVersion: FfiConverterRustBuffer<VaneTlsVersion?> {
+    override fun read(buf: ByteBuffer): VaneTlsVersion? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeVaneTlsVersion.read(buf)
+    }
+
+    override fun allocationSize(value: VaneTlsVersion?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeVaneTlsVersion.allocationSize(value)
+        }
+    }
+
+    override fun write(value: VaneTlsVersion?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeVaneTlsVersion.write(value, buf)
         }
     }
 }
