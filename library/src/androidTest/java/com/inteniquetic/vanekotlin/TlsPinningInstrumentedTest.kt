@@ -4,6 +4,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.util.Base64
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -18,12 +20,18 @@ import org.junit.runner.RunWith
  * Android had no pinning test at all — so "TLS tests pass on real devices" did
  * not mean the same thing on the two platforms.
  *
- * The accept case pins against [TcpCustomRootTrustInstrumentedTest]'s local
- * server instead of a public host on purpose. A pin over a live leaf is a pin
- * over a certificate that rotates, which would turn a passing test into a
- * calendar bomb; the local leaf's DER is a constant in this repo, so the
- * expected pin is computed from it here and can never drift. Reject cases can
- * safely use live hosts — a wrong pin stays wrong across any rotation.
+ * The TCP accept case pins against [TcpCustomRootTrustInstrumentedTest]'s
+ * local server instead of a public host on purpose. A hard-coded pin over a
+ * live leaf is a calendar bomb — it passes until the certificate renews; the
+ * local leaf's DER is a constant in this repo, so the expected pin is computed
+ * from it here and can never drift. Reject cases can safely use live hosts: a
+ * wrong pin stays wrong across any rotation.
+ *
+ * HTTP/3 has no local server to pin against — the one here speaks TLS over
+ * TCP, not QUIC — so [correctCertificatePinIsAcceptedOnHttp3] derives the
+ * expected pin at runtime instead of hard-coding it, and is rotation-proof for
+ * the same reason a constant is. See that test for what it additionally
+ * assumes.
  */
 @RunWith(AndroidJUnit4::class)
 class TlsPinningInstrumentedTest {
@@ -83,10 +91,47 @@ class TlsPinningInstrumentedTest {
             VaneConfigurationBuilder()
                 .http3Only()
                 .timeout(30u)
-                .certificatePins(mapOf("cloudflare-quic.com" to listOf(WRONG_PIN)))
+                .certificatePins(mapOf(H3_HOST to listOf(WRONG_PIN)))
                 .build()
         )
-        assertPinMismatch(runCatching { client.getRequest("https://cloudflare-quic.com/") })
+        assertPinMismatch(runCatching { client.getRequest("https://$H3_HOST/") })
+    }
+
+    /**
+     * The HTTP/3 accept case: a pin the peer really does match must let the
+     * request through, or "rejects a wrong pin" above would also pass against
+     * a build that rejected *every* pinned HTTP/3 request.
+     *
+     * The pin is derived at runtime from a TLS handshake to the same host over
+     * TCP, which buys two things a hard-coded constant does not: it survives
+     * certificate renewal, and it asserts that both transports are shown the
+     * same leaf. What it assumes is exactly that — one origin certificate for
+     * :443 whether the client arrives over TCP or QUIC. That holds for
+     * Cloudflare today; if it ever stops holding, this fails as a pin mismatch
+     * for a reason that is not a Vane bug, which is what the failure message
+     * says so the next reader is not sent hunting.
+     */
+    @Test
+    fun correctCertificatePinIsAcceptedOnHttp3() = runBlocking {
+        val client = createVaneClient(
+            VaneConfigurationBuilder()
+                .http3Only()
+                .timeout(30u)
+                .certificatePins(mapOf(H3_HOST to listOf(livePinFor(H3_HOST))))
+                .build()
+        )
+        val result = runCatching { client.getRequest("https://$H3_HOST/") }
+        val failure = result.exceptionOrNull()
+        if (failure?.message?.contains("Certificate pin mismatch") == true) {
+            throw AssertionError(
+                "HTTP/3 presented a different leaf than TCP for $H3_HOST. That is a " +
+                    "changed assumption about the host, not necessarily a Vane defect — " +
+                    "check whether the origin now serves per-transport certificates."
+            )
+        }
+        val response = result.getOrThrow()
+        assertEquals(200, response.statusCode.toInt())
+        assertEquals(VaneHttpVersion.HTTP3, response.httpVersion)
     }
 
     @Test
@@ -121,6 +166,19 @@ class TlsPinningInstrumentedTest {
         )
     }
 
+    /**
+     * The pin the host is presenting right now, read off a plain TCP TLS
+     * handshake with the platform's own stack — nothing of Vane's is involved,
+     * so this cannot agree with the code under test by sharing a bug with it.
+     */
+    private fun livePinFor(host: String): String {
+        val socket = SSLSocketFactory.getDefault().createSocket(host, 443) as SSLSocket
+        return socket.use {
+            it.startHandshake()
+            pinOf(it.session.peerCertificates.first().encoded)
+        }
+    }
+
     /** `sha256-cert/` pins are over the leaf's DER — see `certificate_pin_values`. */
     private fun expectedPin(): String {
         val der = CertificateFactory.getInstance("X.509")
@@ -128,11 +186,15 @@ class TlsPinningInstrumentedTest {
                 TcpCustomRootTrustInstrumentedTest.SERVER_CERT_PEM.byteInputStream()
             )
             .encoded
-        val digest = MessageDigest.getInstance("SHA-256").digest(der)
-        return "sha256-cert/" + Base64.getEncoder().encodeToString(digest)
+        return pinOf(der)
     }
+
+    private fun pinOf(der: ByteArray): String =
+        "sha256-cert/" + Base64.getEncoder()
+            .encodeToString(MessageDigest.getInstance("SHA-256").digest(der))
 
     private companion object {
         const val WRONG_PIN = "sha256-cert/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        const val H3_HOST = "cloudflare-quic.com"
     }
 }
