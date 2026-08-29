@@ -114,7 +114,7 @@ class TcpCustomRootTrustInstrumentedTest {
      * handshakes — the point of two of the three tests — surface client-side;
      * the accept loop just moves on to the next connection.
      */
-    private class LocalTlsServer(certPem: String, keyPem: String) : Closeable {
+    internal class LocalTlsServer(certPem: String, keyPem: String) : Closeable {
         private val socket: SSLServerSocket
         private val thread: Thread
         val port: Int get() = socket.localPort
@@ -175,7 +175,7 @@ class TcpCustomRootTrustInstrumentedTest {
         }
     }
 
-    private companion object {
+    internal companion object {
         /** Self-signed test CA — the identity the knob is asked to trust. */
         const val CUSTOM_CA_PEM = """-----BEGIN CERTIFICATE-----
 MIIBpjCCAUugAwIBAgIUUdDVaXDNp7LPLL2oIKLhFClJuEEwCgYIKoZIzj0EAwIw
