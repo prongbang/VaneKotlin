@@ -8,7 +8,7 @@ for the full cross-platform guide.
 
 ## Requirements
 
-- Android `minSdk 33`
+- Android `minSdk 29` (Android 10)
 - Kotlin coroutines
 - The `VaneKotlin/library` module
 

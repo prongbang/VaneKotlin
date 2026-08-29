@@ -8,7 +8,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        minSdk = 33
+        minSdk = 29
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
@@ -43,6 +43,10 @@ dependencies {
     // src/main/java/org/rustls/platformverifier, so it needs no dependency
     // here. See that directory for provenance and the local patch.
     implementation("net.java.dev.jna:jna:5.18.1@aar")
+    // @RequiresApi on the UniFFI-generated SystemCleaner wrapper, which is
+    // what lets minSdk sit below 34. Compile-only would be wrong: the
+    // annotation is CLASS-retention and consumers lint against it.
+    implementation("androidx.annotation:annotation:1.9.1")
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
