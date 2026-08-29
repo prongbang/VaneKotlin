@@ -2716,6 +2716,33 @@ data class VaneClientConfig (
      * Client certificate (mTLS) presented to the origin on both stacks.
      */
     var `clientCertificate`: VaneClientCertificate? = null 
+    , 
+    /**
+     * Seconds of no forward progress after which an HTTP/3 request fails,
+     * instead of `timeout_seconds` bounding the request as a whole.
+     *
+     * `None` (the default) keeps the historical behaviour exactly:
+     * `timeout_seconds` is an absolute deadline covering handshake, upload
+     * and download together, so a body larger than the link can move in that
+     * window fails however healthy the connection is.
+     *
+     * `Some(n)` trades that bound for a progress-based one: the request may
+     * run as long as it keeps moving, and fails after `n` seconds in which
+     * nothing was uploaded, nothing was downloaded and no state advanced.
+     * It is opt-in because it is a real loosening — nothing then caps a
+     * request's total duration, and a peer willing to dribble one byte per
+     * interval can hold it open. The transport-level backstop still applies:
+     * QUIC's idle timeout is armed from the same value, so a peer that goes
+     * entirely silent still kills the connection.
+     *
+     * HTTP/3 only. reqwest wraps body-send and header-send in one call, so
+     * the TCP path cannot observe upload progress to reset anything against;
+     * it stays on the absolute deadline. Documented rather than rejected, on
+     * the `tls_min_version` precedent — a knob that one transport enforces
+     * and the other cannot is a fact about the transports, not a caller
+     * error.
+     */
+    var `inactivityTimeoutSeconds`: kotlin.ULong? = null 
     
 ){
     
@@ -2758,6 +2785,7 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
             FfiConverterOptionalTypeVaneTlsVersion.read(buf),
             FfiConverterSequenceString.read(buf),
             FfiConverterOptionalTypeVaneClientCertificate.read(buf),
+            FfiConverterOptionalULong.read(buf),
         )
     }
 
@@ -2787,7 +2815,8 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
             FfiConverterOptionalTypeVaneTlsVersion.allocationSize(value.`tlsMinVersion`) +
             FfiConverterOptionalTypeVaneTlsVersion.allocationSize(value.`tlsMaxVersion`) +
             FfiConverterSequenceString.allocationSize(value.`customRootCertificates`) +
-            FfiConverterOptionalTypeVaneClientCertificate.allocationSize(value.`clientCertificate`)
+            FfiConverterOptionalTypeVaneClientCertificate.allocationSize(value.`clientCertificate`) +
+            FfiConverterOptionalULong.allocationSize(value.`inactivityTimeoutSeconds`)
     )
 
     override fun write(value: VaneClientConfig, buf: ByteBuffer) {
@@ -2817,6 +2846,7 @@ public object FfiConverterTypeVaneClientConfig: FfiConverterRustBuffer<VaneClien
             FfiConverterOptionalTypeVaneTlsVersion.write(value.`tlsMaxVersion`, buf)
             FfiConverterSequenceString.write(value.`customRootCertificates`, buf)
             FfiConverterOptionalTypeVaneClientCertificate.write(value.`clientCertificate`, buf)
+            FfiConverterOptionalULong.write(value.`inactivityTimeoutSeconds`, buf)
     }
 }
 

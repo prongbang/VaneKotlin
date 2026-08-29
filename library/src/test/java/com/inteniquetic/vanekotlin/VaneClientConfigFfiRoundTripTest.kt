@@ -70,7 +70,8 @@ class VaneClientConfigFfiRoundTripTest {
         clientCertificate = VaneClientCertificate(
             certificatePem = "-----BEGIN CERTIFICATE-----\nQ0ND\n-----END CERTIFICATE-----\n",
             privateKeyPem = "-----BEGIN PRIVATE KEY-----\nS0VZ\n-----END PRIVATE KEY-----\n"
-        )
+        ),
+        inactivityTimeoutSeconds = 15u
     )
 
     @Test
@@ -105,14 +106,16 @@ class VaneClientConfigFfiRoundTripTest {
         assertEquals(original.tlsMaxVersion, decoded.tlsMaxVersion)
         assertEquals(original.customRootCertificates, decoded.customRootCertificates)
         assertEquals(original.clientCertificate, decoded.clientCertificate)
+        assertEquals(original.inactivityTimeoutSeconds, decoded.inactivityTimeoutSeconds)
     }
 
     @Test
     fun fieldsAreWrittenInTheOrderTheCoreDeclaresThem() {
         // Decode the buffer by hand with the per-type converters, in the order
         // vane-rs declares VaneClientConfig — the six v5 knobs strictly after
-        // proxyAuthorization. A reordering in either half fails here even when
-        // a whole-struct round trip still happens to agree.
+        // proxyAuthorization, then v6's inactivityTimeoutSeconds strictly
+        // after those. A reordering in either half fails here even when a
+        // whole-struct round trip still happens to agree.
         val original = populated()
         val buf = lower(original)
 
@@ -142,6 +145,7 @@ class VaneClientConfigFfiRoundTripTest {
         assertEquals(original.tlsMaxVersion, FfiConverterOptionalTypeVaneTlsVersion.read(buf))
         assertEquals(original.customRootCertificates, FfiConverterSequenceString.read(buf))
         assertEquals(original.clientCertificate, FfiConverterOptionalTypeVaneClientCertificate.read(buf))
+        assertEquals(original.inactivityTimeoutSeconds, FfiConverterOptionalULong.read(buf))
         assertFalse("junk remaining after the last field", buf.hasRemaining())
     }
 
@@ -179,6 +183,11 @@ class VaneClientConfigFfiRoundTripTest {
         assertNull(original.tlsMaxVersion)
         assertEquals(emptyList<String>(), original.customRootCertificates)
         assertNull(original.clientCertificate)
+        // v6, and the one default here that changes behaviour rather than
+        // just a value: null is what keeps `timeoutSeconds` an absolute
+        // deadline. A default that arrived as anything else would silently
+        // remove every existing caller's bound on total request duration.
+        assertNull(original.inactivityTimeoutSeconds)
 
         val decoded = roundTrip(original)
 
@@ -187,6 +196,7 @@ class VaneClientConfigFfiRoundTripTest {
         assertNull(decoded.tlsMaxVersion)
         assertEquals(emptyList<String>(), decoded.customRootCertificates)
         assertNull(decoded.clientCertificate)
+        assertNull(decoded.inactivityTimeoutSeconds)
     }
 
     @Test
