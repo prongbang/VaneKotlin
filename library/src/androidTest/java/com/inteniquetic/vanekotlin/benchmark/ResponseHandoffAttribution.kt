@@ -83,6 +83,11 @@ class ResponseHandoffAttribution {
             val realCreate = VaneProgressBridge.create
             val captured = AtomicReference<ULong?>(null)
             VaneProgressBridge.create = { realCreate().also { captured.set(it) } }
+            // Prices one JNA-direct call + small-record RustBuffer lift on this
+            // device — the poller makes thousands per request anyway, so the
+            // measurement is free. Decides whether the fixed post-byte cost is
+            // marshalling (ms-scale trips) or scheduling (µs-scale trips).
+            val snapNanos = java.util.concurrent.ConcurrentLinkedQueue<Long>()
             try {
                 repeat(rounds) {
                     captured.set(null)
@@ -100,8 +105,10 @@ class ResponseHandoffAttribution {
                             // test then blames on the library. VANE_POLL_NANOS=0
                             // restores the spin so the difference is visible.
                             if (pollNanos > 0) java.util.concurrent.locks.LockSupport.parkNanos(pollNanos)
+                            val snapStart = System.nanoTime()
                             val snap = runCatching { VaneProgressBridge.snapshot(id!!) }
                                 .getOrNull() ?: break
+                            snapNanos.add(System.nanoTime() - snapStart)
                             if (firstByteAt.get() == 0L && snap.downloadReceived > 0uL) {
                                 firstByteAt.set(System.nanoTime())
                             }
@@ -162,6 +169,15 @@ class ResponseHandoffAttribution {
                     bytes, total, ttfb, transfer, mbps, handoff
                 )
             )
+            val snaps = snapNanos.sorted()
+            if (snaps.isNotEmpty()) {
+                fun pct(p: Int) =
+                    snaps[(snaps.size * p / 100).coerceAtMost(snaps.size - 1)] / 1_000.0
+                report.appendLine(
+                    "      jna snapshot: n=%d p50=%.1fus p95=%.1fus p99=%.1fus max=%.1fus"
+                        .format(snaps.size, pct(50), pct(95), pct(99), snaps.last() / 1_000.0)
+                )
+            }
         }
 
         val text = report.toString()
