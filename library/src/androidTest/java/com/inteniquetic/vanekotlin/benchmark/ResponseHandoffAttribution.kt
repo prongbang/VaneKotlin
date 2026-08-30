@@ -47,9 +47,10 @@ class ResponseHandoffAttribution {
         val url = args.getString("VANE_TEST_BASE_URL")?.trimEnd('/')?.plus("/")
             ?: "https://cloudflare-quic.com/"
         val rounds = args.getString("VANE_BENCH_REQUESTS")?.toIntOrNull() ?: 12
+        val pollNanos = args.getString("VANE_POLL_NANOS")?.toLongOrNull() ?: 50_000L
 
         val report = StringBuilder()
-        report.appendLine("url=$url rounds=$rounds")
+        report.appendLine("url=$url rounds=$rounds pollNanos=$pollNanos")
         report.appendLine(
             "mode  bytes   total_ms  download_ms  handoff_ms  handoff_%  MB/s_handoff"
         )
@@ -89,6 +90,13 @@ class ResponseHandoffAttribution {
                         var id: ULong? = null
                         while (stop.get() == 0L) {
                             if (id == null) { id = captured.get(); continue }
+                            // Yield between samples. A flat-out spin here is a
+                            // measurement that competes with the dispatcher the
+                            // request itself resumes on, on a device with few
+                            // slow cores — which would show up as time this
+                            // test then blames on the library. VANE_POLL_NANOS=0
+                            // restores the spin so the difference is visible.
+                            if (pollNanos > 0) java.util.concurrent.locks.LockSupport.parkNanos(pollNanos)
                             val snap = runCatching { VaneProgressBridge.snapshot(id!!) }
                                 .getOrNull() ?: break
                             if (snap.done ||
