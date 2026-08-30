@@ -52,7 +52,7 @@ class ResponseHandoffAttribution {
         val report = StringBuilder()
         report.appendLine("url=$url rounds=$rounds pollNanos=$pollNanos")
         report.appendLine(
-            "mode  bytes   total_ms  download_ms  handoff_ms  handoff_%  MB/s_handoff"
+            "mode  bytes  total_ms  ttfb_ms  transfer_ms  MB/s  post_byte_ms"
         )
 
         for (mode in listOf(
@@ -72,6 +72,8 @@ class ResponseHandoffAttribution {
 
             val totals = ArrayList<Double>()
             val handoffs = ArrayList<Double>()
+            val ttfbs = ArrayList<Double>()
+            val transfers = ArrayList<Double>()
             var bytes = 0
 
             // The library owns the progress id, so borrow it at the seam that
@@ -85,6 +87,7 @@ class ResponseHandoffAttribution {
                 repeat(rounds) {
                     captured.set(null)
                     val lastByteAt = AtomicLong(0)
+                    val firstByteAt = AtomicLong(0)
                     val stop = AtomicLong(0)
                     val poller = thread(isDaemon = true) {
                         var id: ULong? = null
@@ -99,6 +102,9 @@ class ResponseHandoffAttribution {
                             if (pollNanos > 0) java.util.concurrent.locks.LockSupport.parkNanos(pollNanos)
                             val snap = runCatching { VaneProgressBridge.snapshot(id!!) }
                                 .getOrNull() ?: break
+                            if (firstByteAt.get() == 0L && snap.downloadReceived > 0uL) {
+                                firstByteAt.set(System.nanoTime())
+                            }
                             if (snap.done ||
                                 (snap.downloadTotal > 0uL &&
                                     snap.downloadReceived >= snap.downloadTotal)
@@ -122,6 +128,15 @@ class ResponseHandoffAttribution {
                     if (mark != 0L && mark in started..returned) {
                         totals += (returned - started) / 1_000_000.0
                         handoffs += (returned - mark) / 1_000_000.0
+                        // Splitting the download half too: time to the first
+                        // byte is the connection and the server, time from
+                        // first to last is this client draining the socket.
+                        // Only the second is Vane's to lose.
+                        val first = firstByteAt.get()
+                        if (first != 0L && first in started..mark) {
+                            ttfbs += (first - started) / 1_000_000.0
+                            transfers += (mark - first) / 1_000_000.0
+                        }
                     }
                 }
             } finally {
@@ -134,15 +149,17 @@ class ResponseHandoffAttribution {
             }
             val total = totals.sorted()[totals.size / 2]
             val handoff = handoffs.sorted()[handoffs.size / 2]
-            val mbps = if (handoff > 0) (bytes / 1_048_576.0) / (handoff / 1000.0) else 0.0
+            val ttfb = if (ttfbs.isEmpty()) 0.0 else ttfbs.sorted()[ttfbs.size / 2]
+            val transfer = if (transfers.isEmpty()) 0.0 else transfers.sorted()[transfers.size / 2]
+            val mbps = if (transfer > 0) (bytes / 1_048_576.0) / (transfer / 1000.0) else 0.0
             report.appendLine(
-                "%-5s %7d %9.2f %12.2f %11.2f %9.1f %13.1f".format(
+                "%-5s %7d %8.2f %8.2f %12.2f %5.1f %12.2f".format(
                     when (mode) {
                         VaneProtocolMode.HTTP1_ONLY -> "h1"
                         VaneProtocolMode.HTTP2_ONLY -> "h2"
                         else -> "h3"
                     },
-                    bytes, total, total - handoff, handoff, 100.0 * handoff / total, mbps
+                    bytes, total, ttfb, transfer, mbps, handoff
                 )
             )
         }
